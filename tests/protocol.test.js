@@ -31,10 +31,26 @@ test('guests must request access and hosts approve or reject before chat is enab
 });
 
 test('typing status is announced and clears automatically after typing stops', () => {
-  assert.match(source, /id="typing-indicator" aria-live="polite"/);
+  assert.match(source, /id="typing-indicator"[^>]*aria-live="polite"/);
   assert.match(source, /function broadcastTyping\(active\)/);
   assert.match(source, /setTimeout\(\(\) => broadcastTyping\(false\), 1100\)/);
   assert.match(source, /type: 'typing'/);
+});
+
+test('message tools include replies, copy, edit, delete, and safely linked URLs', () => {
+  assert.match(source, /data-message-action="reply"/);
+  assert.match(source, /data-message-action="copy"/);
+  assert.match(source, /function sendMessageUpdate/);
+  assert.match(source, /function applyMessageUpdate/);
+  assert.match(source, /function renderText/);
+  assert.match(source, /rel="noopener noreferrer"/);
+});
+
+test('search, dark mode, and unread jump controls are available', () => {
+  assert.match(source, /id="search-input"/);
+  assert.match(source, /function toggleTheme/);
+  assert.match(source, /id="new-messages"/);
+  assert.match(source, /function renderUnread/);
 });
 
 test('emoji reactions are allow-listed, synchronized, and attached to message IDs', () => {
