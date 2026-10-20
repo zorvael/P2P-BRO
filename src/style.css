@@ -15,3 +15,5 @@
 .request-actions button:first-child{background:#49634d;color:white;border-color:#49634d}
 .request-actions button:hover{filter:brightness(.95)}
 @media(max-width:700px){.join-requests{margin:10px 0 0}.join-request{display:inline-flex;max-width:min(100%,310px);vertical-align:top}.request-heading{margin:4px 0}}
+
+.typing-indicator{height:0;overflow:hidden;opacity:0;color:#7d8676;font:10px 'DM Mono',monospace;transition:opacity .15s ease;display:flex;align-items:center;padding-left:2px}.typing-indicator.visible{height:23px;opacity:1}.reaction-strip{display:flex;gap:4px;margin-top:5px;flex-wrap:wrap}.reaction{min-width:27px;height:23px;padding:0 6px;border:1px solid transparent;border-radius:12px;background:transparent;color:#737469;font:12px 'DM Sans',sans-serif;cursor:pointer;transition:background .15s,border-color .15s,transform .15s}.reaction:hover{background:#f1f0eb;border-color:#e5e3db;transform:translateY(-1px)}.reaction.selected{background:#e7eee4;border-color:#b9c9b5}.reaction span{margin-left:4px;font:9px 'DM Mono',monospace;color:#64745f}.mine .reaction-strip{justify-content:flex-end}.reaction:focus-visible{outline:2px solid #789078;outline-offset:1px}
