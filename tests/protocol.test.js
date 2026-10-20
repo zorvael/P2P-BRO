@@ -69,3 +69,24 @@ test('emoji reactions are allow-listed, synchronized, and attached to message ID
   assert.match(source, /!REACTIONS\.includes\(data\.emoji\)/);
   assert.match(source, /aria-pressed="\$\{selected\}"/);
 });
+
+test('voice chat uses WebRTC calls and synchronizes the room roster', () => {
+  assert.match(source, /getUserMedia\(\{ audio: true, video: false \}\)/);
+  assert.match(source, /state\.peer\.on\('call', handleIncomingVoiceCall\)/);
+  assert.match(source, /type: 'voice-roster'/);
+  assert.match(source, /type: 'voice-join'/);
+});
+
+test('file sharing validates size and carries an expiring binary attachment', () => {
+  assert.match(source, /file\.size > 5 \* 1024 \* 1024/);
+  assert.match(source, /type: 'file'/);
+  assert.match(source, /data\.size > 5 \* 1024 \* 1024/);
+  assert.match(source, /file-attachment/);
+});
+
+test('disappearing messages and read receipts synchronize through the room host', () => {
+  assert.match(source, /id="expiry-select"/);
+  assert.match(source, /type: 'expire'/);
+  assert.match(source, /type: 'receipt'/);
+  assert.match(source, /read-receipt/);
+});
