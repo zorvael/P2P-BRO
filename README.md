@@ -1,26 +1,28 @@
 # Near — private chat, directly
 
-Near is a lightweight browser chat room built on WebRTC. One person hosts a room and shares an invite link; guests request access and connect through the host. Text and files travel over encrypted WebRTC data channels, with the host relaying guest messages so everyone in the room shares one conversation. Voice chat uses WebRTC audio calls between participants. Messages can disappear after a chosen interval, and senders can see read receipts. No chat history is stored by this app.
+Near is a lightweight browser chat room built on WebRTC. One person hosts a room and shares an invite link; guests request access and connect through the host. Text and files travel over encrypted WebRTC data channels, with the host relaying guest messages so everyone in the room shares one conversation. Voice chat uses WebRTC audio calls between participants. Messages can disappear after a chosen interval, and senders can see delivery receipts. No chat history is stored by this app.
 
 ## Requirements
 
-- Node.js 20 or newer and npm
+- Node.js 20 or newer with Corepack and pnpm 9.15.0
 - A modern browser with WebRTC support
 - Microphone access is needed only when a participant joins voice chat
 - Shared files must be 5 MB or smaller
+- Rooms allow up to four participants, including the host
 - Internet access for the default public PeerJS signaling broker and Google Fonts. For production, configure your own signaling service and TURN server.
 
 ## Run locally
 
 ```sh
 cp .env.example .env
-npm install
-npm run dev
+corepack enable
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
 Open the local URL printed by Vite. To try a real connection, open it in two browser windows (or on two devices on the same reachable network), create a room in one, then send its invite link to the other. The room host must keep its tab open while the room is in use.
 
-Build a production bundle with `npm run build`. Preview it locally with `npm run preview`. Run the built-in checks with `npm test`.
+Build a production bundle with `pnpm build`. Preview it locally with `pnpm preview`. Run the built-in checks with `pnpm test`.
 
 ## How it works
 
@@ -32,7 +34,8 @@ Build a production bundle with `npm run build`. Preview it locally with `npm run
 - Voice participants create direct WebRTC audio calls; microphone permission is requested only after tapping Voice. Voice calls use a mesh, so keep rooms small.
 - File attachments travel through the host over WebRTC and are limited to 5 MB. The app does not upload them to a file server.
 - Disappearing-message choices apply to messages sent after selecting the timer. Every participant removes the message when its expiry time arrives; the timer is not a substitute for preventing screenshots or copies.
-- Read receipts show which connected participants received and rendered a message in their open room.
+- Delivery receipts show which connected participants received and rendered a message in their open room.
+- Rooms accept at most four participants; extra join attempts receive a clear room-full response. Incoming text, file, and message-update events have per-peer rate limits and duplicate message IDs are ignored.
 
 ## Configure signaling and ICE
 
@@ -66,10 +69,11 @@ The app is published from the `main` branch of [`zorvael/P2P-BRO`](https://githu
 ```sh
 git clone https://github.com/zorvael/P2P-BRO.git
 cd P2P-BRO
-npm install
-npm run dev
+corepack enable
+pnpm install --frozen-lockfile
+pnpm dev
 # after editing and checking your change:
-git add src README.md tests
+git add src README.md tests package.json .github/workflows/deploy-pages.yml
 git commit -m "Describe your change"
 git push origin main
 ```
