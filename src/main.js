@@ -1,15 +1,16 @@
 import Peer from 'peerjs';
 import './style.css';
 import { canAcceptGuest, createEventLimiter, isValidFileMessage, isValidTextMessage, normalizeExpiry } from './protocol.js';
+import { createRecoveryRegistry, isPeerInRoster, retryDelay, safeConnectionState, summarizePeerStats } from './network.js';
 
 const app = document.querySelector('#app');
-const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null, replyTo: null, editingId: null, unread: 0, search: '', expiryMs: 0, expiryTimers: new Map(), localStream: null, voiceActive: false, voiceRoster: [], calls: new Map(), rateLimit: createEventLimiter({ message: { windowMs: 10_000, limit: 20 }, file: { windowMs: 60_000, limit: 3 }, update: { windowMs: 10_000, limit: 40 } }) };
+const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null, replyTo: null, editingId: null, unread: 0, search: '', expiryMs: 0, expiryTimers: new Map(), localStream: null, voiceActive: false, voiceRoster: [], calls: new Map(), pendingVoiceCalls: new Map(), voiceRecovery: createRecoveryRegistry(), voiceRetryTimers: new Map(), networkPeers: new Map(), dataRecovery: new Map(), resumeTokens: new Map(), networkTimer: null, networkOpen: false, networkOnline: navigator.onLine, roomEnded: false, leaving: false, rateLimit: createEventLimiter({ message: { windowMs: 10_000, limit: 20 }, file: { windowMs: 60_000, limit: 3 }, update: { windowMs: 10_000, limit: 40 } }) };
 const REACTIONS = ['❤️', '😂', '👍', '🎉', '😮'];
 const esc = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const initials = (name) => name.trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'Y';
 
 function peerOptions() {
-  const options = { debug: 1 };
+  const options = { debug: 0 };
   if (import.meta.env.VITE_PEER_HOST) {
     options.host = import.meta.env.VITE_PEER_HOST;
     options.port = Number(import.meta.env.VITE_PEER_PORT || 443);
@@ -100,7 +101,7 @@ function renderRoom() {
     <main class="chat-shell">
       <header class="chat-topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><div class="room-label"><span class="room-symbol">✳</span><div><strong>your little corner</strong><small id="room-subtitle">Connecting to your room…</small></div></div><div class="top-actions"><button id="theme-btn" class="outline-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button><button id="voice-btn" class="outline-btn voice-btn" type="button" aria-label="Join voice chat">♫ <span>Voice</span></button><button id="invite-btn" class="outline-btn">Invite someone <span>↗</span></button><button id="leave-btn" class="icon-btn" title="Leave room" aria-label="Leave room">×</button></div></header>
       <div class="chat-layout"><aside class="people-panel"><div class="panel-heading"><span>IN THIS ROOM</span><span id="people-count" class="count-pill">1</span></div><div id="people-list"></div><div id="join-requests" class="join-requests"></div><div class="privacy-note"><span class="privacy-icon">⌑</span><div><strong>Just between you</strong><p>Messages travel directly between browsers. Nothing is stored on a server.</p></div></div></aside>
-      <section class="conversation"><div id="connection-banner" class="connection-banner"><i class="status-dot"></i><span id="connection-text">Setting up your private connection</span><button id="retry-btn" class="retry-btn hidden" type="button">Retry</button><button id="search-toggle" class="search-toggle" type="button" aria-label="Search messages" title="Search messages">⌕</button></div><div id="message-search" class="message-search hidden"><input id="search-input" type="search" placeholder="Search this conversation…" aria-label="Search messages" /><button id="search-clear" type="button" aria-label="Clear search">×</button></div><div id="messages" class="messages"><div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>A little space, just for you.</h2><p>Share an invite when you’re ready. The conversation begins when they arrive.</p></div></div><button id="new-messages" class="new-messages hidden" type="button">↓ New messages</button><div id="typing-indicator" class="typing-indicator" aria-live="polite"></div><div id="reply-preview" class="reply-preview hidden"></div><form id="message-form" class="composer"><button type="button" class="composer-symbol" title="This message is sent directly">✳</button><button id="file-btn" type="button" class="file-btn" title="Share a file" aria-label="Share a file" disabled>＋</button><input id="file-input" class="hidden" type="file" /><select id="expiry-select" class="expiry-select" aria-label="Message expiry" title="Disappearing messages"><option value="0">Keep</option><option value="60000">1 min</option><option value="3600000">1 hour</option><option value="86400000">1 day</option></select><input id="message-input" maxlength="2000" placeholder="Write something thoughtful…" autocomplete="off" disabled /><button id="send-btn" class="send-btn" type="submit" disabled aria-label="Send message">↑</button></form><div class="composer-foot"><span>Messages are not saved after you leave.</span><span><kbd>↵</kbd> to send</span></div><div id="audio-players" class="audio-players" aria-label="Voice chat audio"></div></section></div>
+      <section class="conversation"><div id="connection-banner" class="connection-banner"><i class="status-dot"></i><span id="connection-text">Setting up your private connection</span><button id="retry-btn" class="retry-btn hidden" type="button">Retry</button><button id="network-toggle" class="network-toggle" type="button" aria-expanded="false" aria-controls="network-dashboard">Network</button><button id="search-toggle" class="search-toggle" type="button" aria-label="Search messages" title="Search messages">⌕</button></div><section id="network-dashboard" class="network-dashboard hidden" aria-label="Live connection details"><div class="network-dashboard-heading"><div><strong>Live connection details</strong><small>Peer connection metrics · private addresses and ICE credentials are hidden</small></div><button id="network-close" type="button" aria-label="Close connection details">×</button></div><div id="network-rows" class="network-rows"></div></section><div id="message-search" class="message-search hidden"><input id="search-input" type="search" placeholder="Search this conversation…" aria-label="Search messages" /><button id="search-clear" type="button" aria-label="Clear search">×</button></div><div id="messages" class="messages"><div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>A little space, just for you.</h2><p>Share an invite when you’re ready. The conversation begins when they arrive.</p></div></div><button id="new-messages" class="new-messages hidden" type="button">↓ New messages</button><div id="typing-indicator" class="typing-indicator" aria-live="polite"></div><div id="reply-preview" class="reply-preview hidden"></div><form id="message-form" class="composer"><button type="button" class="composer-symbol" title="This message is sent directly">✳</button><button id="file-btn" type="button" class="file-btn" title="Share a file" aria-label="Share a file" disabled>＋</button><input id="file-input" class="hidden" type="file" /><select id="expiry-select" class="expiry-select" aria-label="Message expiry" title="Disappearing messages"><option value="0">Keep</option><option value="60000">1 min</option><option value="3600000">1 hour</option><option value="86400000">1 day</option></select><input id="message-input" maxlength="2000" placeholder="Write something thoughtful…" autocomplete="off" disabled /><button id="send-btn" class="send-btn" type="submit" disabled aria-label="Send message">↑</button></form><div class="composer-foot"><span>Messages are not saved after you leave.</span><span><kbd>↵</kbd> to send</span></div><div id="audio-players" class="audio-players" aria-label="Voice chat audio"></div></section></div>
       <div id="toast" class="toast" role="status"></div>
     </main>`;
   document.querySelector('#invite-btn').addEventListener('click', shareInvite);
@@ -108,6 +109,8 @@ function renderRoom() {
   document.querySelector('#message-form').addEventListener('submit', sendMessage);
   document.querySelector('#voice-btn').addEventListener('click', toggleVoice);
   document.querySelector('#retry-btn').addEventListener('click', retryJoinRoom);
+  document.querySelector('#network-toggle').addEventListener('click', toggleNetworkDashboard);
+  document.querySelector('#network-close').addEventListener('click', toggleNetworkDashboard);
   document.querySelector('#file-btn').addEventListener('click', () => document.querySelector('#file-input').click());
   document.querySelector('#file-input').addEventListener('change', async (event) => {
     const file = event.target.files?.[0];
@@ -166,6 +169,7 @@ function renderRoom() {
     if (event.target.value.trim()) state.typingTimer = setTimeout(() => broadcastTyping(false), 1100);
   });
   updatePeople();
+  startNetworkMonitor();
   document.body.classList.toggle('dark', localStorage.getItem('near-theme') === 'dark');
 }
 
@@ -183,6 +187,106 @@ function updateVoiceUI() {
   button.setAttribute('aria-label', state.voiceActive ? 'Leave voice chat' : 'Join voice chat');
   button.title = state.voiceActive ? `In voice chat with ${state.voiceRoster.length} participant${state.voiceRoster.length === 1 ? '' : 's'}` : 'Join voice chat';
   button.disabled = !state.isHost && connectedCount() === 0;
+}
+
+function ensureNetworkPeer(peerId, name = 'Guest') {
+  let record = state.networkPeers.get(peerId);
+  if (!record) {
+    record = { name: name || 'Guest', chat: { state: 'connecting', ice: 'new', metrics: null }, voice: { state: 'off', ice: 'unknown', metrics: null }, recovery: '' };
+    state.networkPeers.set(peerId, record);
+  } else if (name) record.name = name;
+  return record;
+}
+
+function toggleNetworkDashboard() {
+  state.networkOpen = !state.networkOpen;
+  const panel = document.querySelector('#network-dashboard');
+  const button = document.querySelector('#network-toggle');
+  panel?.classList.toggle('hidden', !state.networkOpen);
+  button?.setAttribute('aria-expanded', String(state.networkOpen));
+  renderNetworkDashboard();
+}
+
+function renderNetworkDashboard() {
+  const rows = document.querySelector('#network-rows');
+  if (!rows) return;
+  const peers = [...state.networkPeers.entries()];
+  if (!peers.length) {
+    rows.innerHTML = `<p class="network-empty">No peer connections yet. Connection details will appear when someone joins.</p>`;
+    return;
+  }
+  rows.innerHTML = peers.map(([peerId, record]) => {
+    const metric = record.voice.metrics || record.chat.metrics;
+    const metricMode = record.voice.metrics ? 'Voice stats' : record.chat.metrics ? 'Chat stats' : 'Stats unavailable';
+    const chatState = state.dataRecovery.get(peerId)?.active ? 'recovering' : record.chat.state;
+    const voiceState = record.voice.state;
+    const route = metric?.path === 'direct' ? 'Direct (stats confirmed)' : metric?.path === 'relayed' ? 'Relayed via TURN' : 'Unknown (stats unavailable)';
+    const rtt = metric?.rttMs === null || metric?.rttMs === undefined ? 'Unavailable' : `${metric.rttMs} ms${metric.rttSource === 'remote-report' ? ' · remote report' : ''}`;
+    const loss = metric?.packetLossPercent === null || metric?.packetLossPercent === undefined ? 'Unavailable' : `${metric.packetLossPercent}%`;
+    const jitter = metric?.jitterMs === null || metric?.jitterMs === undefined ? 'Unavailable' : `${metric.jitterMs} ms`;
+    const candidateTypes = metric?.candidateTypes || 'Unavailable';
+    return `<article class="network-peer"><div class="network-peer-heading"><strong>${esc(record.name)}</strong><span>${state.networkOnline ? 'Network online' : 'Device offline'}</span></div><div class="network-states"><span>Chat <b>${esc(statusLabel(chatState))}</b></span><span>Voice <b>${esc(statusLabel(voiceState))}</b></span></div><div class="network-metrics"><span><small>Path</small><b>${esc(route)}</b></span><span><small>RTT</small><b>${esc(rtt)}</b></span><span><small>Packet loss</small><b>${esc(loss)}</b></span><span><small>Jitter</small><b>${esc(jitter)}</b></span><span><small>Candidate types</small><b>${esc(candidateTypes)}</b></span></div><small class="network-source">${metricMode} · values come from this browser’s WebRTC stats</small>${record.recovery ? `<small class="network-recovery">${esc(record.recovery)}</small>` : ''}</article>`;
+  }).join('');
+}
+
+function setPeerNetworkState(peerId, kind, { stateName, iceState, name } = {}) {
+  const record = ensureNetworkPeer(peerId, name);
+  if (stateName) record[kind].state = safeConnectionState(stateName);
+  if (iceState) record[kind].ice = safeConnectionState(iceState);
+  renderNetworkDashboard();
+}
+
+function startNetworkMonitor() {
+  clearInterval(state.networkTimer);
+  if (!state.networkListenersBound) {
+    state.networkListenersBound = true;
+    window.addEventListener('offline', () => {
+      state.networkOnline = false;
+      renderNetworkDashboard();
+    });
+    window.addEventListener('online', () => {
+      state.networkOnline = true;
+      renderNetworkDashboard();
+      state.dataRecovery.forEach((recovery, peerId) => {
+        if (recovery.active && !recovery.timer) scheduleDataRecovery(peerId, 'Network restored', 0);
+      });
+      state.voiceRoster.forEach((person) => {
+        const voice = state.networkPeers.get(person.id)?.voice;
+        if (voice && voice.state !== 'connected') scheduleVoiceRecovery(person.id, 'Network restored', 0);
+      });
+    });
+  }
+  state.networkOnline = navigator.onLine;
+  state.networkTimer = setInterval(() => {
+    for (const [peerId, entry] of [...state.connections, ...state.pending]) {
+      pollConnectionStats(peerId, 'chat', entry.conn?.peerConnection, entry.name);
+    }
+    for (const [peerId, call] of state.calls) pollConnectionStats(peerId, 'voice', call.peerConnection);
+    for (const [peerId, call] of state.pendingVoiceCalls) pollConnectionStats(peerId, 'voice', call.peerConnection);
+  }, 2500);
+}
+
+async function pollConnectionStats(peerId, kind, peerConnection, name) {
+  if (!peerConnection || typeof peerConnection.getStats !== 'function') return;
+  const record = ensureNetworkPeer(peerId, name);
+  const link = record[kind];
+  if (link.statsPending) return;
+  link.statsPending = true;
+  try {
+    const report = await peerConnection.getStats();
+    link.metrics = summarizePeerStats(report);
+    link.state = safeConnectionState(peerConnection.connectionState || peerConnection.iceConnectionState);
+    link.ice = safeConnectionState(peerConnection.iceConnectionState);
+  } catch {
+    link.metrics ||= null;
+  } finally {
+    link.statsPending = false;
+    renderNetworkDashboard();
+  }
+}
+
+function statusLabel(status) {
+  return ({ new: 'Starting', connecting: 'Connecting', checking: 'Checking route', connected: 'Connected', completed: 'Connected', disconnected: 'Reconnecting', failed: 'Failed', closed: 'Closed', unknown: 'Unavailable', off: 'Not in voice' })[status] || 'Unavailable';
 }
 
 async function toggleVoice() {
@@ -204,13 +308,19 @@ async function toggleVoice() {
 function stopVoice(notifyHost = true) {
   state.voiceActive = false;
   state.calls.forEach((call) => call.close());
+  state.pendingVoiceCalls.forEach((call) => call.close());
   state.calls.clear();
+  state.pendingVoiceCalls.clear();
+  state.voiceRetryTimers.forEach(clearTimeout);
+  state.voiceRetryTimers.clear();
+  state.networkPeers.forEach((record, peerId) => { record.voice.state = 'off'; record.recovery = ''; state.voiceRecovery.clear(peerId); });
   document.querySelector('#audio-players')?.replaceChildren();
   state.localStream?.getTracks().forEach((track) => track.stop());
   state.localStream = null;
   if (state.isHost) broadcastVoiceRoster();
   else if (notifyHost) sendToHost({ type: 'voice-left', name: state.name });
   updateVoiceUI();
+  renderNetworkDashboard();
 }
 
 function broadcastVoiceRoster() {
@@ -227,9 +337,19 @@ function broadcastVoiceRoster() {
 function syncVoiceCalls() {
   if (!state.voiceActive || !state.localStream || !state.peer) return;
   const peers = new Map(state.voiceRoster.filter((person) => person.id !== state.peer.id && state.peer.id.localeCompare(person.id) < 0).map((person) => [person.id, person.name]));
-  state.calls.forEach((call, id) => { if (!peers.has(id)) { call.close(); state.calls.delete(id); removeAudio(id); } });
+  state.calls.forEach((call, id) => { if (!peers.has(id)) { call.close(); state.calls.delete(id); removeAudio(id); const record = state.networkPeers.get(id); if (record) record.voice.state = 'off'; state.voiceRecovery.clear(id); } });
+  state.pendingVoiceCalls.forEach((call, id) => {
+    if (!isPeerInRoster(id, state.voiceRoster)) {
+      call.close();
+      state.pendingVoiceCalls.delete(id);
+      const timer = state.voiceRetryTimers.get(id);
+      if (timer) clearTimeout(timer);
+      state.voiceRetryTimers.delete(id);
+      state.voiceRecovery.clear(id);
+    }
+  });
   peers.forEach((name, id) => {
-    if (state.calls.has(id)) return;
+    if (state.calls.has(id) || state.pendingVoiceCalls.has(id)) return;
     try {
       const call = state.peer.call(id, state.localStream, { metadata: { name: state.name } });
       if (call) registerVoiceCall(id, call, true);
@@ -242,17 +362,128 @@ function handleIncomingVoiceCall(call) {
     call.close();
     return;
   }
-  if (state.calls.has(call.peer)) { call.close(); return; }
-  registerVoiceCall(call.peer, call, false);
+  const existing = state.calls.get(call.peer);
+  const pending = state.pendingVoiceCalls.get(call.peer);
+  if (pending && pending !== call) { call.close(); return; }
+  if (existing && call.metadata?.recovery !== true) { call.close(); return; }
+  registerVoiceCall(call.peer, call, false, { replacement: Boolean(existing) });
   call.answer(state.localStream);
 }
 
-function registerVoiceCall(peerId, call, outgoing) {
-  state.calls.set(peerId, call);
-  call.on('stream', (stream) => attachAudio(peerId, stream));
-  call.on('close', () => { state.calls.delete(peerId); removeAudio(peerId); });
-  call.on('error', () => { state.calls.delete(peerId); removeAudio(peerId); alertToast('A voice connection was interrupted.'); });
-  if (!outgoing) call.on('error', () => { state.calls.delete(peerId); removeAudio(peerId); });
+function registerVoiceCall(peerId, call, outgoing, { replacement = false } = {}) {
+  if (replacement) state.pendingVoiceCalls.set(peerId, call);
+  else state.calls.set(peerId, call);
+  const record = ensureNetworkPeer(peerId);
+  record.voice.state = replacement ? 'connecting' : 'checking';
+  const pc = call.peerConnection;
+  const onState = () => {
+    const ice = pc?.iceConnectionState || 'unknown';
+    record.voice.ice = safeConnectionState(ice);
+    if (ice === 'connected' || ice === 'completed') {
+      record.voice.state = 'connected';
+      const timer = state.voiceRetryTimers.get(peerId);
+      if (timer) { clearTimeout(timer); state.voiceRetryTimers.delete(peerId); }
+    } else if (ice === 'disconnected' || ice === 'failed') {
+      record.voice.state = 'recovering';
+      if (isVoiceRecoveryLeader(peerId)) {
+        const wait = ice === 'disconnected' ? 3500 : 0;
+        scheduleVoiceRecovery(peerId, ice === 'failed' ? 'Voice path failed' : 'Voice connection interrupted', wait);
+      }
+    } else if (ice === 'checking') record.voice.state = 'checking';
+    renderNetworkDashboard();
+  };
+  call.on('iceStateChanged', (ice) => {
+    record.voice.ice = safeConnectionState(ice);
+    if (ice === 'connected' || ice === 'completed') {
+      record.voice.state = 'connected';
+      const timer = state.voiceRetryTimers.get(peerId);
+      if (timer) { clearTimeout(timer); state.voiceRetryTimers.delete(peerId); }
+    } else if (ice === 'disconnected' || ice === 'failed') {
+      record.voice.state = 'recovering';
+      if (isVoiceRecoveryLeader(peerId)) scheduleVoiceRecovery(peerId, `Voice ${ice}`, ice === 'disconnected' ? 3500 : 0);
+    }
+    renderNetworkDashboard();
+  });
+  pc?.addEventListener?.('connectionstatechange', onState);
+  pc?.addEventListener?.('iceconnectionstatechange', onState);
+  call.on('stream', (stream) => {
+    const previous = state.calls.get(peerId);
+    state.calls.set(peerId, call);
+    if (state.pendingVoiceCalls.get(peerId) === call) state.pendingVoiceCalls.delete(peerId);
+    state.voiceRecovery.complete(peerId);
+    const timer = state.voiceRetryTimers.get(peerId);
+    if (timer) { clearTimeout(timer); state.voiceRetryTimers.delete(peerId); }
+    record.voice.state = 'connected';
+    record.voice.ice = safeConnectionState(pc?.iceConnectionState || 'connected');
+    record.recovery = '';
+    attachAudio(peerId, stream);
+    if (previous && previous !== call) previous.close();
+    renderNetworkDashboard();
+  });
+  call.on('close', () => {
+    const wasPending = state.pendingVoiceCalls.get(peerId) === call;
+    if (wasPending) state.pendingVoiceCalls.delete(peerId);
+    const wasCurrent = state.calls.get(peerId) === call;
+    if (wasCurrent) state.calls.delete(peerId);
+    if (!state.calls.has(peerId)) removeAudio(peerId);
+    if (wasPending || wasCurrent) {
+      const stillInVoice = state.voiceActive && state.voiceRoster.some((person) => person.id === peerId);
+      if (stillInVoice && isVoiceRecoveryLeader(peerId)) failVoiceAttempt(peerId, 'Voice call closed');
+      else if (!stillInVoice) record.voice.state = 'off';
+    }
+    renderNetworkDashboard();
+  });
+  call.on('error', () => {
+    if (state.pendingVoiceCalls.get(peerId) === call) state.pendingVoiceCalls.delete(peerId);
+    if (state.calls.get(peerId) === call) state.calls.delete(peerId);
+    if (!state.calls.has(peerId)) removeAudio(peerId);
+    if (state.voiceActive && state.voiceRoster.some((person) => person.id === peerId) && isVoiceRecoveryLeader(peerId)) failVoiceAttempt(peerId, 'Voice connection interrupted');
+    renderNetworkDashboard();
+  });
+  onState();
+}
+
+function isVoiceRecoveryLeader(peerId) {
+  return Boolean(state.peer?.id && state.peer.id.localeCompare(peerId) < 0);
+}
+
+function scheduleVoiceRecovery(peerId, reason, delayMs = null) {
+  if (!state.voiceActive || !state.localStream || state.roomEnded || !isVoiceRecoveryLeader(peerId)) return;
+  if (state.voiceRetryTimers.has(peerId) || state.pendingVoiceCalls.has(peerId)) return;
+  const attempt = Math.max(1, state.voiceRecovery.attempts(peerId) || 1);
+  const record = ensureNetworkPeer(peerId);
+  if (attempt > 4) {
+    record.voice.state = 'failed';
+    record.recovery = 'Voice could not reconnect after 4 attempts.';
+    renderNetworkDashboard();
+    return;
+  }
+  record.voice.state = 'recovering';
+  record.recovery = `${reason}. Retry ${attempt} of 4.`;
+  const timer = setTimeout(() => {
+    state.voiceRetryTimers.delete(peerId);
+    if (!state.voiceActive || !state.localStream || state.roomEnded || state.pendingVoiceCalls.has(peerId)) return;
+    const call = state.peer?.call(peerId, state.localStream, { metadata: { name: state.name, recovery: true, attempt } });
+    if (!call) return failVoiceAttempt(peerId, 'Could not start a replacement voice call');
+    state.voiceRecovery.begin(peerId);
+    registerVoiceCall(peerId, call, true, { replacement: true });
+    renderNetworkDashboard();
+  }, Math.max(0, delayMs ?? retryDelay(attempt)));
+  state.voiceRetryTimers.set(peerId, timer);
+  renderNetworkDashboard();
+}
+
+function failVoiceAttempt(peerId, reason) {
+  if (state.voiceRetryTimers.has(peerId)) return;
+  const retry = state.voiceRecovery.fail(peerId);
+  if (retry.delayMs === null) {
+    const record = ensureNetworkPeer(peerId);
+    record.voice.state = 'failed';
+    record.recovery = `Voice could not reconnect after ${retry.attempt - 1} attempts.`;
+    renderNetworkDashboard();
+    return;
+  }
+  scheduleVoiceRecovery(peerId, reason, retry.delayMs);
 }
 
 function attachAudio(peerId, stream) {
@@ -420,6 +651,8 @@ function applyMessageUpdate(type, messageId, actorId, text) {
 
 function createRoom() {
   state.isHost = true;
+  state.roomEnded = false;
+  state.leaving = false;
   renderRoom();
   state.peer = new Peer(undefined, peerOptions());
   bindPeerEvents();
@@ -437,6 +670,8 @@ function joinRoom(raw) {
   const roomId = extractRoomId(raw);
   if (!roomId || roomId.length > 100) return alertToast('That invite doesn’t look quite right.');
   state.isHost = false;
+  state.roomEnded = false;
+  state.leaving = false;
   state.roomId = roomId;
   renderRoom();
   state.peer = new Peer(undefined, peerOptions());
@@ -446,10 +681,10 @@ function joinRoom(raw) {
   });
 }
 
-function connectToRoom() {
+function connectToRoom(automatic = false) {
   if (!state.peer || state.peer.destroyed || !state.roomId) return;
   const conn = state.peer.connect(state.roomId, { reliable: true, metadata: { name: state.name } });
-  addConnection(conn, true);
+  addConnection(conn, true, { automatic });
 }
 
 function retryJoinRoom() {
@@ -457,12 +692,16 @@ function retryJoinRoom() {
   const button = document.querySelector('#retry-btn');
   button.disabled = true;
   document.querySelector('#connection-text').textContent = 'Trying to reconnect…';
-  state.connections.forEach((entry) => entry.conn.close());
-  state.connections.clear();
-  if (state.peer && !state.peer.destroyed) state.peer.destroy();
-  state.peer = new Peer(undefined, peerOptions());
-  bindPeerEvents();
-  state.peer.on('open', connectToRoom);
+  if (state.peer && !state.peer.destroyed) {
+    const current = state.connections.get(state.roomId);
+    if (current?.connected) { current.connected = false; current.recovering = true; current.conn.close(); }
+    scheduleDataRecovery(state.roomId, 'Manual retry', 0);
+  }
+  else {
+    state.peer = new Peer(undefined, peerOptions());
+    bindPeerEvents();
+    state.peer.on('open', () => scheduleDataRecovery(state.roomId, 'Manual retry', 0));
+  }
   setTimeout(() => { if (button.isConnected) button.disabled = false; }, 2500);
 }
 
@@ -480,20 +719,34 @@ function bindPeerEvents() {
   });
 }
 
-function addConnection(conn, outgoing = false) {
+function addConnection(conn, outgoing = false, options = {}) {
+  const existing = state.connections.get(conn.peer) || state.pending.get(conn.peer);
+  if (existing && existing.conn !== conn && !existing.recovering) {
+    conn.close();
+    return;
+  }
   if (!outgoing && !canAcceptGuest(connectedCount(), state.pending.size)) {
     const deny = () => { try { conn.send({ type: 'join-denied', reason: 'full' }); } catch {} setTimeout(() => conn.close(), 200); };
     if (conn.open) deny(); else conn.on('open', deny);
     return;
   }
-  const entry = { conn, name: outgoing ? 'Host' : 'Guest', connected: false, voice: false, requested: false };
+  const entry = { conn, name: outgoing ? 'Host' : 'Guest', connected: false, voice: false, requested: false, outgoing, recovering: Boolean(options.automatic) };
+  const network = ensureNetworkPeer(conn.peer, entry.name);
+  network.chat.state = 'connecting';
+  network.recovery = options.automatic ? 'Restoring chat connection…' : '';
   if (outgoing) state.connections.set(conn.peer, entry);
   else state.pending.set(conn.peer, entry);
   conn.on('open', () => {
     if (!outgoing) return;
-    conn.send({ type: 'join-request', name: state.name });
+    conn.send({ type: 'join-request', name: state.name, ...(state.resumeToken ? { resumeToken: state.resumeToken } : {}) });
     document.querySelector('#connection-text').textContent = 'Request sent · waiting for the host to approve';
     document.querySelector('#connection-banner').classList.add('ready');
+    network.chat.state = 'connecting';
+    renderNetworkDashboard();
+    if (options.automatic) {
+      const recovery = state.dataRecovery.get(conn.peer);
+      if (recovery) recovery.handshakeTimer = setTimeout(() => { if (!entry.connected) conn.close(); }, 9000);
+    }
     const emptyState = document.querySelector('#messages .empty-state');
     if (emptyState) {
       emptyState.querySelector('h2').textContent = 'Waiting for approval.';
@@ -501,20 +754,149 @@ function addConnection(conn, outgoing = false) {
     }
   });
   conn.on('data', (data) => handleData(conn.peer, data));
+  conn.on('iceStateChanged', (iceState) => {
+    network.chat.ice = safeConnectionState(iceState);
+    if (iceState === 'connected' || iceState === 'completed') {
+      network.chat.state = 'connected';
+      const recovery = state.dataRecovery.get(conn.peer);
+      if (recovery?.disconnectTimer) { clearTimeout(recovery.disconnectTimer); recovery.disconnectTimer = null; }
+      if (recovery?.timer && !recovery.connecting && entry.connected) {
+        clearTimeout(recovery.timer);
+        recovery.timer = null;
+        recovery.active = false;
+        state.dataRecovery.delete(conn.peer);
+        network.recovery = '';
+      }
+    } else if (iceState === 'disconnected') {
+      network.chat.state = 'disconnected';
+      const recovery = state.dataRecovery.get(conn.peer) || { attempt: 0, timer: null, handshakeTimer: null, disconnectTimer: null, active: false, connecting: false };
+      state.dataRecovery.set(conn.peer, recovery);
+      clearTimeout(recovery.disconnectTimer);
+      recovery.disconnectTimer = setTimeout(() => {
+        recovery.disconnectTimer = null;
+        if (state.connections.get(conn.peer) === entry && entry.connected && conn.peerConnection?.iceConnectionState === 'disconnected') conn.close();
+      }, 3500);
+    } else if (iceState === 'failed') {
+      network.chat.state = 'failed';
+      conn.close();
+    }
+    renderNetworkDashboard();
+  });
   conn.on('close', () => {
     setTyping(entry.name, false);
     if (state.pending.get(conn.peer) === entry) state.pending.delete(conn.peer);
+    state.rateLimit.clearPeer(conn.peer);
+    const stillCurrent = state.connections.get(conn.peer) === entry;
+    if (stillCurrent && entry.recovering && !entry.intentionalRemoteLeave && !state.leaving && !state.roomEnded && !state.peer?.destroyed) {
+      const recovery = state.dataRecovery.get(conn.peer);
+      if (recovery) { recovery.connecting = false; clearTimeout(recovery.handshakeTimer); recovery.handshakeTimer = null; }
+      network.chat.state = 'recovering';
+      scheduleDataRecovery(conn.peer, 'Recovery attempt did not connect');
+      updatePeople();
+      renderNetworkDashboard();
+      return;
+    }
+    if (stillCurrent && entry.connected && !entry.intentionalRemoteLeave && !state.leaving && !state.roomEnded && !state.peer?.destroyed) {
+      entry.connected = false;
+      entry.recovering = true;
+      network.chat.state = 'recovering';
+      network.recovery = 'Restoring chat connection…';
+      if (state.isHost) scheduleHostRecoveryExpiry(conn.peer, entry);
+      else scheduleDataRecovery(conn.peer, 'Chat connection closed');
+      updatePeople();
+      renderMessages();
+      renderNetworkDashboard();
+      return;
+    }
     const wasInVoice = entry.voice;
     entry.voice = false;
-    if (state.connections.get(conn.peer) === entry) state.connections.delete(conn.peer);
-    state.rateLimit.clearPeer(conn.peer);
-    if (state.calls.has(conn.peer)) state.calls.get(conn.peer).close();
+    if (stillCurrent) state.connections.delete(conn.peer);
+    network.chat.state = entry.intentionalRemoteLeave ? 'closed' : 'failed';
+    network.recovery = '';
+    if (state.isHost && entry.intentionalRemoteLeave) {
+      state.resumeTokens.delete(conn.peer);
+      state.networkPeers.delete(conn.peer);
+    }
+    if (state.calls.has(conn.peer) && entry.intentionalRemoteLeave) state.calls.get(conn.peer).close();
     if (state.isHost && wasInVoice) broadcastVoiceRoster();
-    if (!state.isHost && state.voiceActive) stopVoice(false);
-    renderJoinRequests(); updatePeople(); renderMessages();
+    if (!state.isHost && state.voiceActive && (entry.intentionalRemoteLeave || state.roomEnded)) stopVoice(false);
+    renderJoinRequests(); updatePeople(); renderMessages(); renderNetworkDashboard();
     if (!connectedCount() && entry.connected) document.querySelector('#connection-text').textContent = state.isHost ? 'Room is open · invite someone to begin' : 'Your guest left the room';
   });
-  conn.on('error', () => alertToast('A guest connection was interrupted.'));
+  conn.on('error', () => { network.chat.state = 'failed'; renderNetworkDashboard(); alertToast('A guest connection was interrupted.'); });
+}
+
+function scheduleDataRecovery(peerId, reason, delayOverride = null) {
+  if (state.isHost || state.leaving || state.roomEnded || !state.roomId || !state.peer || state.peer.destroyed) return;
+  const recovery = state.dataRecovery.get(peerId) || { attempt: 0, timer: null, handshakeTimer: null, disconnectTimer: null, active: false, connecting: false };
+  state.dataRecovery.set(peerId, recovery);
+  recovery.active = true;
+  if (recovery.timer || recovery.connecting) return;
+  if (!state.networkOnline) {
+    ensureNetworkPeer(peerId).recovery = 'Waiting for your device to reconnect to the internet.';
+    renderNetworkDashboard();
+    return;
+  }
+  const attempt = delayOverride === 0 ? Math.max(1, recovery.attempt + 1) : recovery.attempt + 1;
+  if (attempt > 4) {
+    recovery.active = false;
+    const entry = state.connections.get(peerId);
+    if (entry?.recovering) { entry.voice = false; state.connections.delete(peerId); }
+    const network = ensureNetworkPeer(peerId);
+    network.chat.state = 'failed';
+    network.recovery = 'Chat could not reconnect after 4 attempts. Ask the host for a new invite.';
+    updatePeople();
+    renderNetworkDashboard();
+    return;
+  }
+  recovery.attempt = attempt;
+  const wait = delayOverride === null ? retryDelay(attempt) : Math.max(0, delayOverride);
+  const network = ensureNetworkPeer(peerId);
+  network.chat.state = 'recovering';
+  network.recovery = `${reason}. Retry ${attempt} of 4${wait ? ` in ${Math.ceil(wait / 1000)}s` : ' now'}.`;
+  document.querySelector('#connection-text').textContent = 'Connection interrupted · reconnecting…';
+  recovery.timer = setTimeout(() => {
+    recovery.timer = null;
+    if (state.leaving || state.roomEnded || !state.peer || state.peer.destroyed) return;
+    if (!state.networkOnline) return scheduleDataRecovery(peerId, 'Waiting for internet', 0);
+    const current = state.connections.get(peerId);
+    if (current?.connected && !current.recovering) {
+      recovery.active = false;
+      recovery.attempt = 0;
+      state.dataRecovery.delete(peerId);
+      const network = ensureNetworkPeer(peerId);
+      network.chat.state = 'connected';
+      network.recovery = '';
+      renderNetworkDashboard();
+      return;
+    }
+    recovery.connecting = true;
+    const conn = state.peer.connect(peerId, { reliable: true, metadata: { name: state.name } });
+    addConnection(conn, true, { automatic: true });
+    recovery.handshakeTimer = setTimeout(() => { if (recovery.connecting && !state.connections.get(peerId)?.connected) conn.close(); }, 12000);
+  }, wait);
+  renderNetworkDashboard();
+}
+
+function scheduleHostRecoveryExpiry(peerId, entry) {
+  const recovery = state.dataRecovery.get(peerId) || { attempt: 0, timer: null, active: true };
+  state.dataRecovery.set(peerId, recovery);
+  recovery.active = true;
+  if (recovery.expiryTimer) clearTimeout(recovery.expiryTimer);
+  recovery.expiryTimer = setTimeout(() => {
+    recovery.expiryTimer = null;
+    if (state.connections.get(peerId) !== entry || !entry.recovering) return;
+    entry.voice = false;
+    state.connections.delete(peerId);
+    recovery.active = false;
+    const network = ensureNetworkPeer(peerId, entry.name);
+    network.chat.state = 'failed';
+    network.recovery = 'Guest could not reconnect.';
+    if (state.calls.has(peerId)) state.calls.get(peerId).close();
+    broadcastVoiceRoster();
+    updatePeople();
+    renderNetworkDashboard();
+  }, 22_000);
 }
 
 function handleData(peerId, data) {
@@ -523,26 +905,59 @@ function handleData(peerId, data) {
     const request = state.pending.get(peerId);
     if (!request) return;
     request.name = typeof data.name === 'string' ? data.name.trim().slice(0, 32) || 'Guest' : 'Guest';
+    request.resumeToken = typeof data.resumeToken === 'string' ? data.resumeToken.slice(0, 100) : '';
     request.requested = true;
+    if (request.resumeToken && request.resumeToken === state.resumeTokens.get(peerId)) {
+      approveGuest(peerId, { automatic: true });
+      return;
+    }
     renderJoinRequests();
     document.querySelector('#connection-text').textContent = 'Someone is asking to join your room';
     return;
   }
   const entry = state.connections.get(peerId);
   if (!entry) return;
+  if (state.isHost && data.type === 'leave-room') {
+    entry.intentionalRemoteLeave = true;
+    entry.conn.close();
+    return;
+  }
+  if (!state.isHost && data.type === 'room-closing') {
+    state.roomEnded = true;
+    document.querySelector('#connection-text').textContent = 'The host closed this room.';
+    alertToast('The host closed this room.');
+    entry.intentionalRemoteLeave = true;
+    entry.conn.close();
+    renderNetworkDashboard();
+    return;
+  }
   if (!state.isHost && data.type === 'join-approved') {
     entry.name = typeof data.name === 'string' ? data.name.trim().slice(0, 32) || 'Host' : 'Host';
+    state.resumeToken = typeof data.resumeToken === 'string' ? data.resumeToken.slice(0, 100) : state.resumeToken;
     entry.connected = true;
+    entry.recovering = false;
+    const recovery = state.dataRecovery.get(peerId);
+    if (recovery) {
+      clearTimeout(recovery.timer);
+      clearTimeout(recovery.handshakeTimer);
+      clearTimeout(recovery.disconnectTimer);
+    }
+    state.dataRecovery.delete(peerId);
+    const network = ensureNetworkPeer(peerId, entry.name);
+    network.chat.state = 'connected';
+    network.recovery = '';
     updatePeople();
     document.querySelector('#connection-text').textContent = 'Connected directly · you’re in the room';
     document.querySelector('#connection-banner').classList.add('ready');
     document.querySelector('#retry-btn').classList.add('hidden');
+    renderNetworkDashboard();
     renderMessages();
     sendToHost({ type: 'voice-roster-request' });
     return;
   }
   if (!state.isHost && data.type === 'join-denied') {
     alertToast(data.reason === 'full' ? 'This room is full (maximum 4 people).' : 'The host didn’t approve your request.');
+    entry.intentionalRemoteLeave = true;
     entry.conn.close();
     return;
   }
@@ -676,18 +1091,34 @@ function renderJoinRequests() {
   container.innerHTML = `<div class="request-heading">JOIN REQUESTS <span>${requests.length}</span></div>${requests.map(([peerId, request]) => `<div class="join-request"><div class="request-copy"><strong>${esc(request.name)}</strong><small>wants to join</small></div><div class="request-actions"><button type="button" data-join-action="approve" data-peer="${esc(peerId)}">Allow</button><button type="button" data-join-action="reject" data-peer="${esc(peerId)}" aria-label="Reject ${esc(request.name)}">×</button></div></div>`).join('')}`;
 }
 
-function approveGuest(peerId) {
+function approveGuest(peerId, { automatic = false } = {}) {
   const request = state.pending.get(peerId);
   if (!request || !request.requested || !request.conn.open) return;
+  const previous = state.connections.get(peerId);
+  const resumeToken = state.resumeTokens.get(peerId) || makeId();
+  state.resumeTokens.set(peerId, resumeToken);
   state.pending.delete(peerId);
   request.connected = true;
-  request.voice = false;
+  request.recovering = false;
+  request.voice = Boolean(previous?.voice && state.voiceRoster.some((person) => person.id === peerId));
   state.connections.set(peerId, request);
-  request.conn.send({ type: 'join-approved', name: state.name });
+  request.conn.send({ type: 'join-approved', name: state.name, resumeToken });
+  const recovery = state.dataRecovery.get(peerId);
+  if (recovery) {
+    clearTimeout(recovery.expiryTimer);
+    clearTimeout(recovery.timer);
+    clearTimeout(recovery.handshakeTimer);
+  }
+  state.dataRecovery.delete(peerId);
+  const network = ensureNetworkPeer(peerId, request.name);
+  network.chat.state = 'connected';
+  network.recovery = '';
   renderJoinRequests();
   updatePeople();
   document.querySelector('#connection-text').textContent = `${connectedCount()} ${connectedCount() === 1 ? 'person is' : 'people are'} here · connected directly`;
   document.querySelector('#connection-banner').classList.add('ready');
+  renderNetworkDashboard();
+  if (automatic) alertToast(`${request.name} reconnected.`);
   renderMessages();
 }
 
@@ -820,7 +1251,16 @@ function alertToast(message) {
   clearTimeout(alertToast.timer); alertToast.timer = setTimeout(() => toast.classList.remove('show'), 3400);
 }
 function leaveRoom() {
+  state.leaving = true;
+  if (state.isHost) relayToOthers(null, { type: 'room-closing' });
+  else sendToHost({ type: 'leave-room' });
+  clearInterval(state.networkTimer);
+  state.dataRecovery.forEach((recovery) => { clearTimeout(recovery.timer); clearTimeout(recovery.handshakeTimer); clearTimeout(recovery.disconnectTimer); clearTimeout(recovery.expiryTimer); });
+  state.voiceRetryTimers.forEach(clearTimeout);
+  state.voiceRetryTimers.clear();
+  state.dataRecovery.clear();
   state.calls.forEach((call) => call.close());
+  state.pendingVoiceCalls.forEach((call) => call.close());
   state.localStream?.getTracks().forEach((track) => track.stop());
   state.expiryTimers.forEach(clearTimeout);
   state.messages.forEach((message) => { if (message.fileUrl) URL.revokeObjectURL(message.fileUrl); });
@@ -828,8 +1268,12 @@ function leaveRoom() {
   state.typing.forEach(clearTimeout);
   state.typing.clear();
   state.localTyping = false;
+  state.voiceActive = false;
+  state.voiceRoster = [];
+  state.localStream = null;
   if (state.peer) state.peer.destroy();
-  state.connections.clear(); state.pending.clear(); state.messages = []; state.peer = null;
+  state.connections.clear(); state.pending.clear(); state.calls.clear(); state.pendingVoiceCalls.clear(); state.networkPeers.clear(); state.resumeTokens.clear(); state.messages = []; state.peer = null;
+  state.networkTimer = null;
   history.replaceState({}, '', location.pathname);
   renderLanding();
 }
