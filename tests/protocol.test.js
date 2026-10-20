@@ -54,6 +54,14 @@ test('search, dark mode, and unread jump controls are available', () => {
   assert.match(source, /function renderUnread/);
 });
 
+test('first visit shows an accessible welcome dialog with start and invite actions', () => {
+  assert.match(source, /function showWelcome\(\)/);
+  assert.match(source, /role="dialog" aria-modal="true" aria-labelledby="welcome-title"/);
+  assert.match(source, /id="welcome-start"/);
+  assert.match(source, /id="welcome-join"/);
+  assert.match(source, /near-welcome-seen/);
+});
+
 test('emoji reactions are allow-listed, synchronized, and attached to message IDs', () => {
   assert.match(source, /const REACTIONS = \['❤️', '😂', '👍', '🎉', '😮'\]/);
   assert.match(source, /function toggleReaction\(messageId, emoji\)/);
