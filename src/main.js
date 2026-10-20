@@ -60,6 +60,38 @@ function renderLanding() {
     document.querySelector('[data-tab="join"]').click();
     document.querySelector('#room-code').value = roomFromUrl;
   }
+  showWelcome();
+}
+
+function showWelcome() {
+  if (localStorage.getItem('near-welcome-seen') === 'yes') return;
+  const layer = document.createElement('div');
+  layer.className = 'welcome-layer';
+  layer.innerHTML = `
+    <section class="welcome-card" role="dialog" aria-modal="true" aria-labelledby="welcome-title" aria-describedby="welcome-copy">
+      <button class="welcome-close" type="button" aria-label="Close welcome">×</button>
+      <div class="welcome-orbit" aria-hidden="true"><span class="welcome-mark">n</span><i>✳</i><b>·</b></div>
+      <span class="welcome-kicker">A PRIVATE SPACE, MADE SIMPLE</span>
+      <h2 id="welcome-title">Welcome to <em>Near.</em></h2>
+      <p id="welcome-copy">A little corner to catch up with your people—directly, quietly, and without making an account.</p>
+      <div class="welcome-points"><span><i>✳</i> Invite-only rooms</span><span><i>↗</i> Direct browser chat</span><span><i>⌑</i> No message archive</span></div>
+      <button class="welcome-primary" id="welcome-start" type="button">Get started <span>↗</span></button>
+      <button class="welcome-secondary" id="welcome-join" type="button">I have an invite link <span>→</span></button>
+      <small class="welcome-foot">Your conversation begins when you’re ready.</small>
+    </section>`;
+  document.body.append(layer);
+  const close = (join = false) => {
+    localStorage.setItem('near-welcome-seen', 'yes');
+    layer.remove();
+    if (join) document.querySelector('[data-tab="join"]').click();
+    else document.querySelector('#display-name').focus();
+  };
+  layer.querySelector('.welcome-close').addEventListener('click', () => close());
+  layer.querySelector('#welcome-start').addEventListener('click', () => close());
+  layer.querySelector('#welcome-join').addEventListener('click', () => close(true));
+  layer.addEventListener('click', (event) => { if (event.target === layer) close(); });
+  layer.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
+  layer.querySelector('#welcome-start').focus();
 }
 
 function renderRoom() {
