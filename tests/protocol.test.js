@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { canAcceptGuest, createEventLimiter, isValidFileMessage, isValidTextMessage, normalizeExpiry, MAX_FILE_BYTES, MAX_MESSAGE_LENGTH } from '../src/protocol.js';
+import { createRecoveryRegistry, isPeerInRoster, retryDelay, summarizePeerStats } from '../src/network.js';
 
 const source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
 const styles = await readFile(new URL('../src/style.css', import.meta.url), 'utf8');
+const networkSource = await readFile(new URL('../src/network.js', import.meta.url), 'utf8');
 
 test('chat client bounds and escapes untrusted message content', () => {
   assert.match(source, /isValidTextMessage\(data\)/);
@@ -146,4 +148,89 @@ test('phone layout stacks the header and keeps the composer inside the viewport'
   assert.match(styles, /height:100dvh/);
   assert.match(styles, /\.conversation\{flex:1;min-height:0/);
   assert.match(styles, /\.messages\{position:relative;flex:1;min-height:0/);
+});
+
+test('recovery retries back off exponentially, cap at four attempts, and isolate participants', () => {
+  assert.deepEqual([1, 2, 3, 4, 5].map((attempt) => retryDelay(attempt)), [1000, 2000, 4000, 8000, 8000]);
+  const recovery = createRecoveryRegistry(4);
+  assert.equal(recovery.begin('peer-a'), true);
+  assert.equal(recovery.begin('peer-a'), false, 'one participant cannot start duplicate recovery at once');
+  assert.equal(recovery.begin('peer-b'), true, 'another participant recovers independently');
+  recovery.complete('peer-b');
+  assert.deepEqual(recovery.fail('peer-a'), { attempt: 1, delayMs: 1000 });
+  for (let attempt = 2; attempt <= 4; attempt += 1) {
+    recovery.begin('peer-a');
+    assert.equal(recovery.fail('peer-a').attempt, attempt);
+  }
+  recovery.begin('peer-a');
+  assert.deepEqual(recovery.fail('peer-a'), { attempt: 5, delayMs: null });
+  recovery.complete('peer-a');
+  assert.equal(recovery.attempts('peer-a'), 0);
+});
+
+test('repeated recovery failures stop after the cap and a successful reconnect resets attempts', () => {
+  const recovery = createRecoveryRegistry(4);
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    assert.equal(recovery.begin('guest-1'), true);
+    assert.equal(recovery.fail('guest-1').attempt, attempt);
+  }
+  assert.equal(recovery.begin('guest-1'), true);
+  assert.deepEqual(recovery.fail('guest-1'), { attempt: 5, delayMs: null });
+  recovery.complete('guest-1');
+  assert.equal(recovery.attempts('guest-1'), 0);
+});
+
+test('connection recovery avoids duplicate peer connections and duplicate chat messages', () => {
+  assert.match(source, /if \(existing && existing\.conn !== conn && !existing\.recovering\)/);
+  assert.match(source, /state\.messages\.some\(\(message\) => message\.id === data\.id\)/);
+  assert.match(source, /recovery\?\.timer && !recovery\.connecting && entry\.connected/);
+});
+
+test('connection stats use only selected path types and aggregate available media metrics', () => {
+  const report = new Map([
+    ['transport-1', { id: 'transport-1', type: 'transport', selectedCandidatePairId: 'pair-1' }],
+    ['pair-1', { id: 'pair-1', type: 'candidate-pair', localCandidateId: 'local-1', remoteCandidateId: 'remote-1', currentRoundTripTime: 0.042, state: 'succeeded' }],
+    ['local-1', { id: 'local-1', type: 'local-candidate', candidateType: 'host', address: '192.168.1.5', usernameFragment: 'secret-fragment' }],
+    ['remote-1', { id: 'remote-1', type: 'remote-candidate', candidateType: 'srflx', address: '203.0.113.5' }],
+    ['audio-1', { id: 'audio-1', type: 'inbound-rtp', kind: 'audio', packetsReceived: 90, packetsLost: 10, jitter: 0.018 }],
+  ]);
+  const summary = summarizePeerStats(report);
+  assert.equal(summary.path, 'direct');
+  assert.equal(summary.candidateTypes, 'host / srflx');
+  assert.equal(summary.rttMs, 42);
+  assert.equal(summary.packetLossPercent, 10);
+  assert.equal(summary.jitterMs, 18);
+  assert.equal(JSON.stringify(summary).includes('192.168.1.5'), false);
+  assert.equal(JSON.stringify(summary).includes('secret-fragment'), false);
+});
+
+test('TURN path is reported only when a selected candidate pair contains a relay', () => {
+  const relayStats = new Map([
+    ['t', { id: 't', type: 'transport', selectedCandidatePairId: 'p' }],
+    ['p', { id: 'p', type: 'candidate-pair', localCandidateId: 'l', remoteCandidateId: 'r', state: 'succeeded' }],
+    ['l', { id: 'l', type: 'local-candidate', candidateType: 'relay', address: '10.0.0.2' }],
+    ['r', { id: 'r', type: 'remote-candidate', candidateType: 'srflx', address: '203.0.113.8' }],
+  ]);
+  assert.equal(summarizePeerStats(relayStats).path, 'relayed');
+  assert.equal(summarizePeerStats(new Map()).path, 'unknown');
+  assert.equal(summarizePeerStats(new Map()).rttMs, null);
+});
+
+test('departed peers are removed from future voice recovery eligibility', () => {
+  const roster = [{ id: 'peer-a' }, { id: 'peer-b' }];
+  assert.equal(isPeerInRoster('peer-a', roster), true);
+  assert.equal(isPeerInRoster('peer-a', roster.filter((person) => person.id !== 'peer-a')), false);
+  assert.match(source, /if \(!isPeerInRoster\(id, state\.voiceRoster\)\)/);
+});
+
+test('dashboard recovery is per participant and never renders network addresses', () => {
+  assert.match(source, /peerConnection\.getStats\(\)/);
+  assert.match(networkSource, /selectedCandidatePairId/);
+  assert.match(source, /Relayed via TURN/);
+  assert.match(source, /Direct \(stats confirmed\)/);
+  assert.match(source, /private addresses and ICE credentials are hidden/);
+  assert.match(source, /scheduleVoiceRecovery\(peerId/);
+  assert.match(source, /recovery: true/);
+  assert.match(source, /state\.calls\.forEach\(\(call, id\) => \{ if \(!peers\.has\(id\)\)/);
+  assert.match(source, /call\.close\(\);\s*state\.pendingVoiceCalls\.delete\(id\)/);
 });
