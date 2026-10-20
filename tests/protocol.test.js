@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { canAcceptGuest, createEventLimiter, isValidFileMessage, isValidTextMessage, normalizeExpiry, MAX_FILE_BYTES, MAX_MESSAGE_LENGTH } from '../src/protocol.js';
 
 const source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
 
 test('chat client bounds and escapes untrusted message content', () => {
-  assert.match(source, /data\.text\.length > 2000/);
+  assert.match(source, /isValidTextMessage\(data\)/);
   assert.match(source, /replace\(\/\[&<>"'\]/);
   assert.match(source, /maxlength="2000"/);
 });
@@ -80,7 +81,7 @@ test('voice chat uses WebRTC calls and synchronizes the room roster', () => {
 test('file sharing validates size and carries an expiring binary attachment', () => {
   assert.match(source, /file\.size > 5 \* 1024 \* 1024/);
   assert.match(source, /type: 'file'/);
-  assert.match(source, /data\.size > 5 \* 1024 \* 1024/);
+  assert.match(source, /isValidFileMessage\(data\)/);
   assert.match(source, /file-attachment/);
 });
 
@@ -93,4 +94,47 @@ test('disappearing messages and read receipts synchronize through the room host'
 
 test('sending a message keeps the composer focused for continuous mobile typing', () => {
   assert.match(source, /input\.focus\(\{ preventScroll: true \}\)/);
+});
+
+test('rooms admit at most four participants including the host', () => {
+  assert.equal(canAcceptGuest(0, 0), true);
+  assert.equal(canAcceptGuest(1, 1), true);
+  assert.equal(canAcceptGuest(2, 1), false);
+  assert.equal(canAcceptGuest(3, 0), false);
+  assert.equal(canAcceptGuest(-1, 0), false);
+});
+
+test('incoming text and file payloads have strict bounds', () => {
+  assert.equal(isValidTextMessage({ type: 'message', id: 'a', text: 'hello' }), true);
+  assert.equal(isValidTextMessage({ type: 'message', id: 'a', text: ' '.repeat(2) }), false);
+  assert.equal(isValidTextMessage({ type: 'message', id: 'a', text: 'x'.repeat(MAX_MESSAGE_LENGTH + 1) }), false);
+  assert.equal(isValidFileMessage({ type: 'file', id: 'f', fileName: 'x.txt', size: 1, data: new ArrayBuffer(1) }), true);
+  assert.equal(isValidFileMessage({ type: 'file', id: 'f', fileName: 'x.txt', size: MAX_FILE_BYTES + 1, data: new ArrayBuffer(1) }), false);
+});
+
+test('event limits use independent per-peer rolling windows', () => {
+  const allow = createEventLimiter({ message: { windowMs: 1000, limit: 2 }, file: { windowMs: 5000, limit: 1 } });
+  assert.equal(allow('peer-a', 'message', 100), true);
+  assert.equal(allow('peer-a', 'message', 200), true);
+  assert.equal(allow('peer-a', 'message', 300), false);
+  assert.equal(allow('peer-b', 'message', 300), true);
+  assert.equal(allow('peer-a', 'file', 300), true);
+  assert.equal(allow('peer-a', 'file', 400), false);
+  allow.clearPeer('peer-a');
+  assert.equal(allow('peer-a', 'file', 400), true);
+});
+
+test('expiry timestamps reject stale or excessively distant values', () => {
+  assert.equal(normalizeExpiry(0, 1000), 0);
+  assert.equal(normalizeExpiry(2000, 1000), 2000);
+  assert.equal(normalizeExpiry(1000, 1000), null);
+  assert.equal(normalizeExpiry(1000 + 24 * 60 * 60 * 1000 + 60_001, 1000), null);
+});
+
+test('connection and voice cleanup fixes stay wired into the client', () => {
+  assert.match(source, /state\.pending\.set\(conn\.peer, entry\)/);
+  assert.match(source, /request\.connected = true/);
+  assert.match(source, /button\.disabled = !state\.isHost && connectedCount\(\) === 0/);
+  assert.match(source, /function retryJoinRoom\(\)/);
+  assert.match(source, /Delivered to/);
 });
