@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { canAcceptGuest, createEventLimiter, isValidFileMessage, isValidTextMessage, normalizeExpiry, MAX_FILE_BYTES, MAX_MESSAGE_LENGTH } from '../src/protocol.js';
 
 const source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+const styles = await readFile(new URL('../src/style.css', import.meta.url), 'utf8');
 
 test('chat client bounds and escapes untrusted message content', () => {
   assert.match(source, /isValidTextMessage\(data\)/);
@@ -137,4 +138,12 @@ test('connection and voice cleanup fixes stay wired into the client', () => {
   assert.match(source, /button\.disabled = !state\.isHost && connectedCount\(\) === 0/);
   assert.match(source, /function retryJoinRoom\(\)/);
   assert.match(source, /Delivered to/);
+});
+
+test('phone layout stacks the header and keeps the composer inside the viewport', () => {
+  assert.match(styles, /@media\(max-width:700px\)/);
+  assert.match(styles, /grid-template-areas:"brand actions" "room room"/);
+  assert.match(styles, /height:100dvh/);
+  assert.match(styles, /\.conversation\{flex:1;min-height:0/);
+  assert.match(styles, /\.messages\{position:relative;flex:1;min-height:0/);
 });
