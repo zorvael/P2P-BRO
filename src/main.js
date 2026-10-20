@@ -252,7 +252,7 @@ function startNetworkMonitor() {
       });
       state.voiceRoster.forEach((person) => {
         const voice = state.networkPeers.get(person.id)?.voice;
-        if (voice && voice.state !== 'connected') scheduleVoiceRecovery(person.id, 'Network restored', 0);
+        if (voice && voice.state !== 'connected') failVoiceAttempt(person.id, 'Network restored', 0);
       });
     });
   }
@@ -387,7 +387,7 @@ function registerVoiceCall(peerId, call, outgoing, { replacement = false } = {})
       record.voice.state = 'recovering';
       if (isVoiceRecoveryLeader(peerId)) {
         const wait = ice === 'disconnected' ? 3500 : 0;
-        scheduleVoiceRecovery(peerId, ice === 'failed' ? 'Voice path failed' : 'Voice connection interrupted', wait);
+        failVoiceAttempt(peerId, ice === 'failed' ? 'Voice path failed' : 'Voice connection interrupted', wait);
       }
     } else if (ice === 'checking') record.voice.state = 'checking';
     renderNetworkDashboard();
@@ -400,7 +400,7 @@ function registerVoiceCall(peerId, call, outgoing, { replacement = false } = {})
       if (timer) { clearTimeout(timer); state.voiceRetryTimers.delete(peerId); }
     } else if (ice === 'disconnected' || ice === 'failed') {
       record.voice.state = 'recovering';
-      if (isVoiceRecoveryLeader(peerId)) scheduleVoiceRecovery(peerId, `Voice ${ice}`, ice === 'disconnected' ? 3500 : 0);
+      if (isVoiceRecoveryLeader(peerId)) failVoiceAttempt(peerId, `Voice ${ice}`, ice === 'disconnected' ? 3500 : 0);
     }
     renderNetworkDashboard();
   });
@@ -450,7 +450,7 @@ function isVoiceRecoveryLeader(peerId) {
 function scheduleVoiceRecovery(peerId, reason, delayMs = null) {
   if (!state.voiceActive || !state.localStream || state.roomEnded || !isVoiceRecoveryLeader(peerId)) return;
   if (state.voiceRetryTimers.has(peerId) || state.pendingVoiceCalls.has(peerId)) return;
-  const attempt = Math.max(1, state.voiceRecovery.attempts(peerId) || 1);
+  const attempt = Math.max(1, state.voiceRecovery.attempts(peerId));
   const record = ensureNetworkPeer(peerId);
   if (attempt > 4) {
     record.voice.state = 'failed';
@@ -473,7 +473,7 @@ function scheduleVoiceRecovery(peerId, reason, delayMs = null) {
   renderNetworkDashboard();
 }
 
-function failVoiceAttempt(peerId, reason) {
+function failVoiceAttempt(peerId, reason, delayOverride = null) {
   if (state.voiceRetryTimers.has(peerId)) return;
   const retry = state.voiceRecovery.fail(peerId);
   if (retry.delayMs === null) {
@@ -483,7 +483,7 @@ function failVoiceAttempt(peerId, reason) {
     renderNetworkDashboard();
     return;
   }
-  scheduleVoiceRecovery(peerId, reason, retry.delayMs);
+  scheduleVoiceRecovery(peerId, reason, delayOverride ?? retry.delayMs);
 }
 
 function attachAudio(peerId, stream) {
