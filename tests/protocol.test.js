@@ -42,6 +42,7 @@ test('message tools include replies, copy, edit, delete, and safely linked URLs'
   assert.match(source, /data-message-action="copy"/);
   assert.match(source, /function sendMessageUpdate/);
   assert.match(source, /function applyMessageUpdate/);
+  assert.match(source, /message\.text = ''/);
   assert.match(source, /function renderText/);
   assert.match(source, /rel="noopener noreferrer"/);
 });
