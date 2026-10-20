@@ -61,15 +61,17 @@ The public broker is not guaranteed to be available and is not suitable as a pro
 
 ## Publish to GitHub
 
-This workspace is ready to initialize as a repository. After creating an empty GitHub repository, run:
+The app is published from the `main` branch of [`zorvael/P2P-BRO`](https://github.com/zorvael/P2P-BRO). GitHub Actions builds and deploys updates to [zorvael.github.io/P2P-BRO](https://zorvael.github.io/P2P-BRO/). To publish a change from a local clone:
 
 ```sh
-git init
-git add .
-git commit -m "Build Near peer-to-peer chat app"
-git branch -M main
-git remote add origin https://github.com/YOUR-USERNAME/YOUR-REPOSITORY.git
-git push -u origin main
+git clone https://github.com/zorvael/P2P-BRO.git
+cd P2P-BRO
+npm install
+npm run dev
+# after editing and checking your change:
+git add src README.md tests
+git commit -m "Describe your change"
+git push origin main
 ```
 
 Do not commit `.env`; it is ignored. Commit `.env.example` only, with placeholder values.
