@@ -2,7 +2,7 @@ import Peer from 'peerjs';
 import './style.css';
 
 const app = document.querySelector('#app');
-const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null };
+const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null, replyTo: null, editingId: null, unread: 0, search: '' };
 const REACTIONS = ['❤️', '😂', '👍', '🎉', '😮'];
 const esc = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const initials = (name) => name.trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'Y';
@@ -65,17 +65,48 @@ function renderLanding() {
 function renderRoom() {
   app.innerHTML = `
     <main class="chat-shell">
-      <header class="chat-topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><div class="room-label"><span class="room-symbol">✳</span><div><strong>your little corner</strong><small id="room-subtitle">Connecting to your room…</small></div></div><div class="top-actions"><button id="invite-btn" class="outline-btn">Invite someone <span>↗</span></button><button id="leave-btn" class="icon-btn" title="Leave room" aria-label="Leave room">×</button></div></header>
+      <header class="chat-topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><div class="room-label"><span class="room-symbol">✳</span><div><strong>your little corner</strong><small id="room-subtitle">Connecting to your room…</small></div></div><div class="top-actions"><button id="theme-btn" class="outline-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button><button id="invite-btn" class="outline-btn">Invite someone <span>↗</span></button><button id="leave-btn" class="icon-btn" title="Leave room" aria-label="Leave room">×</button></div></header>
       <div class="chat-layout"><aside class="people-panel"><div class="panel-heading"><span>IN THIS ROOM</span><span id="people-count" class="count-pill">1</span></div><div id="people-list"></div><div id="join-requests" class="join-requests"></div><div class="privacy-note"><span class="privacy-icon">⌑</span><div><strong>Just between you</strong><p>Messages travel directly between browsers. Nothing is stored on a server.</p></div></div></aside>
-      <section class="conversation"><div id="connection-banner" class="connection-banner"><i class="status-dot"></i><span id="connection-text">Setting up your private connection</span></div><div id="messages" class="messages"><div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>A little space, just for you.</h2><p>Share an invite when you’re ready. The conversation begins when they arrive.</p></div></div><div id="typing-indicator" class="typing-indicator" aria-live="polite"></div><form id="message-form" class="composer"><button type="button" class="composer-symbol" title="This message is sent directly">✳</button><input id="message-input" maxlength="2000" placeholder="Write something thoughtful…" autocomplete="off" disabled /><button id="send-btn" class="send-btn" type="submit" disabled aria-label="Send message">↑</button></form><div class="composer-foot"><span>Messages are not saved after you leave.</span><span><kbd>↵</kbd> to send</span></div></section></div>
+      <section class="conversation"><div id="connection-banner" class="connection-banner"><i class="status-dot"></i><span id="connection-text">Setting up your private connection</span><button id="search-toggle" class="search-toggle" type="button" aria-label="Search messages" title="Search messages">⌕</button></div><div id="message-search" class="message-search hidden"><input id="search-input" type="search" placeholder="Search this conversation…" aria-label="Search messages" /><button id="search-clear" type="button" aria-label="Clear search">×</button></div><div id="messages" class="messages"><div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>A little space, just for you.</h2><p>Share an invite when you’re ready. The conversation begins when they arrive.</p></div></div><button id="new-messages" class="new-messages hidden" type="button">↓ New messages</button><div id="typing-indicator" class="typing-indicator" aria-live="polite"></div><div id="reply-preview" class="reply-preview hidden"></div><form id="message-form" class="composer"><button type="button" class="composer-symbol" title="This message is sent directly">✳</button><input id="message-input" maxlength="2000" placeholder="Write something thoughtful…" autocomplete="off" disabled /><button id="send-btn" class="send-btn" type="submit" disabled aria-label="Send message">↑</button></form><div class="composer-foot"><span>Messages are not saved after you leave.</span><span><kbd>↵</kbd> to send</span></div></section></div>
       <div id="toast" class="toast" role="status"></div>
     </main>`;
   document.querySelector('#invite-btn').addEventListener('click', shareInvite);
   document.querySelector('#leave-btn').addEventListener('click', leaveRoom);
   document.querySelector('#message-form').addEventListener('submit', sendMessage);
+  document.querySelector('#theme-btn').addEventListener('click', toggleTheme);
+  document.querySelector('#search-toggle').addEventListener('click', () => {
+    const row = document.querySelector('#message-search');
+    row.classList.toggle('hidden');
+    if (!row.classList.contains('hidden')) document.querySelector('#search-input').focus();
+    else setSearch('');
+  });
+  document.querySelector('#search-input').addEventListener('input', (event) => setSearch(event.target.value));
+  document.querySelector('#search-clear').addEventListener('click', () => {
+    document.querySelector('#search-input').value = '';
+    setSearch('');
+    document.querySelector('#search-input').focus();
+  });
+  document.querySelector('#new-messages').addEventListener('click', () => {
+    const panel = document.querySelector('#messages');
+    panel.scrollTop = panel.scrollHeight;
+    state.unread = 0;
+    renderUnread();
+  });
+  document.querySelector('#messages').addEventListener('scroll', () => {
+    const panel = document.querySelector('#messages');
+    if (panel.scrollHeight - panel.scrollTop - panel.clientHeight < 70 && state.unread) {
+      state.unread = 0;
+      renderUnread();
+    }
+  });
   document.querySelector('#messages').addEventListener('click', (event) => {
     const button = event.target.closest('[data-reaction]');
     if (button) toggleReaction(button.dataset.message, button.dataset.reaction);
+    const action = event.target.closest('[data-message-action]');
+    if (action) handleMessageAction(action.dataset.messageAction, action.dataset.message);
+  });
+  document.querySelector('#reply-preview').addEventListener('click', (event) => {
+    if (event.target.closest('[data-cancel-reply]')) setReplyTo(null);
   });
   document.querySelector('#join-requests').addEventListener('click', (event) => {
     const button = event.target.closest('[data-join-action]');
@@ -90,6 +121,82 @@ function renderRoom() {
     if (event.target.value.trim()) state.typingTimer = setTimeout(() => broadcastTyping(false), 1100);
   });
   updatePeople();
+  document.body.classList.toggle('dark', localStorage.getItem('near-theme') === 'dark');
+}
+
+function toggleTheme() {
+  const enabled = !document.body.classList.contains('dark');
+  document.body.classList.toggle('dark', enabled);
+  localStorage.setItem('near-theme', enabled ? 'dark' : 'light');
+}
+
+function setSearch(value) {
+  state.search = String(value || '').slice(0, 120).toLocaleLowerCase();
+  renderMessages();
+}
+
+function renderUnread() {
+  const button = document.querySelector('#new-messages');
+  if (!button) return;
+  button.textContent = state.unread ? `↓ ${state.unread} new message${state.unread === 1 ? '' : 's'}` : '↓ New messages';
+  button.classList.toggle('hidden', !state.unread);
+}
+
+function setReplyTo(message) {
+  state.replyTo = message ? { id: message.id, name: message.name, text: message.text.slice(0, 2000) } : null;
+  const preview = document.querySelector('#reply-preview');
+  if (!preview) return;
+  preview.innerHTML = state.replyTo ? `<span><strong>Replying to ${esc(state.replyTo.name)}</strong><small>${renderText(state.replyTo.text)}</small></span><button type="button" data-cancel-reply aria-label="Cancel reply">×</button>` : '';
+  preview.classList.toggle('hidden', !state.replyTo);
+  if (state.replyTo) document.querySelector('#message-input').focus();
+}
+
+function renderText(text) {
+  const safe = esc(text);
+  return safe.replace(/https?:\/\/[^\s<]+/gi, (url) => {
+    const cleanUrl = url.replace(/[),.!?]+$/, '');
+    return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${cleanUrl}</a>${url.slice(cleanUrl.length)}`;
+  }).replace(/\n/g, '<br>');
+}
+
+async function handleMessageAction(action, messageId) {
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message) return;
+  if (action === 'reply') return setReplyTo(message);
+  if (action === 'copy') {
+    try { await navigator.clipboard.writeText(message.text); alertToast('Message copied.'); }
+    catch { window.prompt('Copy this message:', message.text); }
+    return;
+  }
+  if (action === 'edit' && message.mine) {
+    const text = window.prompt('Edit your message:', message.text);
+    if (text === null) return;
+    const clean = text.trim().slice(0, 2000);
+    if (!clean) return alertToast('A message can’t be empty.');
+    sendMessageUpdate('edit', message, clean);
+  }
+  if (action === 'delete' && message.mine && window.confirm('Delete this message for everyone in the room?')) sendMessageUpdate('delete', message);
+}
+
+function sendMessageUpdate(type, message, text) {
+  if (!state.peer?.id) return;
+  applyMessageUpdate(type, message.id, state.peer.id, text);
+  const payload = { type, messageId: message.id, actorId: state.peer.id, ...(text ? { text } : {}) };
+  if (state.isHost) relayToOthers(null, payload);
+  else {
+    const host = [...state.connections.values()].find((entry) => entry.connected);
+    if (host) host.conn.send(payload);
+  }
+}
+
+function applyMessageUpdate(type, messageId, actorId, text) {
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message || message.authorId !== actorId) return;
+  if (type === 'edit' && typeof text === 'string' && text.trim() && text.length <= 2000) {
+    message.text = text.trim();
+    message.edited = true;
+  } else if (type === 'delete') message.deleted = true;
+  renderMessages();
 }
 
 function createRoom() {
@@ -197,11 +304,13 @@ function handleData(peerId, data) {
     if (typeof data.text !== 'string' || data.text.length < 1 || data.text.length > 2000 || typeof data.id !== 'string' || data.id.length > 80) return;
     const text = data.text.trim();
     if (!text) return;
-    const senderName = entry.name || 'Guest';
-    state.messages.push({ id: data.id, name: senderName, text, time: Date.now(), mine: false, reactions: {} });
-    renderMessages();
+    const senderName = state.isHost ? (entry.name || 'Guest') : (typeof data.name === 'string' ? data.name.trim().slice(0, 32) || entry.name : entry.name || 'Guest');
+    const authorId = state.isHost ? peerId : (typeof data.authorId === 'string' ? data.authorId.slice(0, 100) : peerId);
+    const replyTo = data.replyTo && typeof data.replyTo.name === 'string' && typeof data.replyTo.text === 'string' ? { id: String(data.replyTo.id || '').slice(0, 80), name: data.replyTo.name.slice(0, 32), text: data.replyTo.text.slice(0, 200) } : null;
+    state.messages.push({ id: data.id, authorId, name: senderName, text, replyTo, time: Date.now(), mine: false, reactions: {} });
+    renderMessages({ incoming: true });
     // Relay peer messages through the room host so guests can share one conversation.
-    if (state.isHost) relayToOthers(peerId, { type: 'message', id: data.id, name: senderName, text });
+    if (state.isHost) relayToOthers(peerId, { type: 'message', id: data.id, authorId, name: senderName, text, replyTo });
     return;
   }
   if (data.type === 'reaction') {
@@ -210,6 +319,13 @@ function handleData(peerId, data) {
     const actorName = state.isHost ? entry.name : (typeof data.name === 'string' ? data.name.trim().slice(0, 32) || entry.name : entry.name);
     applyReaction(data.messageId, data.emoji, actorId, actorName, Boolean(data.active));
     if (state.isHost) relayToOthers(peerId, { type: 'reaction', messageId: data.messageId, emoji: data.emoji, actorId, name: actorName, active: Boolean(data.active) });
+  }
+  if (data.type === 'edit' || data.type === 'delete') {
+    if (typeof data.messageId !== 'string' || data.messageId.length > 80) return;
+    const actorId = state.isHost ? peerId : (typeof data.actorId === 'string' ? data.actorId.slice(0, 100) : peerId);
+    if (data.type === 'edit' && (typeof data.text !== 'string' || !data.text.trim() || data.text.length > 2000)) return;
+    applyMessageUpdate(data.type, data.messageId, actorId, data.text);
+    if (state.isHost) relayToOthers(peerId, { type: data.type, messageId: data.messageId, actorId, ...(data.type === 'edit' ? { text: data.text.trim() } : {}) });
   }
 }
 
@@ -290,7 +406,8 @@ function sendMessage(event) {
   if (!text || text.length > 2000 || !connectedCount()) return;
   broadcastTyping(false);
   clearTimeout(state.typingTimer);
-  const message = { type: 'message', id: makeId(), name: state.name, text };
+  const replyTo = state.replyTo ? { ...state.replyTo, text: state.replyTo.text.slice(0, 200) } : null;
+  const message = { type: 'message', id: makeId(), authorId: state.peer.id, name: state.name, text, replyTo };
   if (state.isHost) state.connections.forEach((entry) => { if (entry.connected) entry.conn.send(message); });
   else {
     const host = [...state.connections.values()].find((entry) => entry.connected);
@@ -298,6 +415,7 @@ function sendMessage(event) {
     host.conn.send(message);
   }
   state.messages.push({ ...message, time: Date.now(), mine: true, reactions: {} });
+  setReplyTo(null);
   input.value = '';
   document.querySelector('#send-btn').disabled = true;
   renderMessages();
@@ -313,22 +431,29 @@ function updatePeople() {
   renderJoinRequests();
 }
 
-function renderMessages() {
+function renderMessages({ incoming = false } = {}) {
   const panel = document.querySelector('#messages');
+  if (!panel) return;
+  const nearBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 70;
   if (!state.messages.length) {
     panel.innerHTML = `<div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>${connectedCount() ? 'The room is yours now.' : 'A little space, just for you.'}</h2><p>${connectedCount() ? 'Say hello. Your words travel directly between browsers.' : 'Share an invite when you’re ready. The conversation begins when they arrive.'}</p></div>`;
     return;
   }
-  panel.innerHTML = state.messages.map((msg) => {
+  const filtered = state.messages.filter((msg) => !state.search || `${msg.name} ${msg.text}`.toLocaleLowerCase().includes(state.search));
+  panel.innerHTML = filtered.length ? filtered.map((msg) => {
     const reactionButtons = REACTIONS.map((emoji) => {
       const actors = msg.reactions?.[emoji] || {};
       const count = Object.keys(actors).length;
       const selected = Boolean(state.peer?.id && actors[state.peer.id]);
       return `<button type="button" class="reaction ${selected ? 'selected' : ''}" data-reaction="${emoji}" data-message="${esc(msg.id)}" aria-label="React ${emoji}${count ? `, ${count} reactions` : ''}" aria-pressed="${selected}">${emoji}${count ? `<span>${count}</span>` : ''}</button>`;
     }).join('');
-    return `<div class="message-row ${msg.mine ? 'mine' : ''}"><span class="avatar ${msg.mine ? 'avatar-me' : 'avatar-0'}">${esc(initials(msg.name))}</span><div class="message-body"><div class="message-meta"><strong>${esc(msg.mine ? 'You' : msg.name)}</strong><time>${new Date(msg.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div><div class="bubble">${esc(msg.text).replace(/\n/g, '<br>')}</div><div class="reaction-strip">${reactionButtons}</div></div></div>`;
-  }).join('');
-  panel.scrollTop = panel.scrollHeight;
+    const actions = `<div class="message-actions"><button type="button" data-message-action="reply" data-message="${esc(msg.id)}">Reply</button><button type="button" data-message-action="copy" data-message="${esc(msg.id)}">Copy</button>${msg.mine && !msg.deleted ? `<button type="button" data-message-action="edit" data-message="${esc(msg.id)}">Edit</button><button type="button" data-message-action="delete" data-message="${esc(msg.id)}">Delete</button>` : ''}</div>`;
+    const quote = msg.replyTo ? `<div class="quoted-message"><strong>${esc(msg.replyTo.name)}</strong><span>${renderText(msg.replyTo.text)}</span></div>` : '';
+    const bubble = msg.deleted ? '<em>This message was deleted</em>' : `${quote}${renderText(msg.text)}${msg.edited ? '<small class="edited-label"> · edited</small>' : ''}`;
+    return `<div class="message-row ${msg.mine ? 'mine' : ''}"><span class="avatar ${msg.mine ? 'avatar-me' : 'avatar-0'}">${esc(initials(msg.name))}</span><div class="message-body"><div class="message-meta"><strong>${esc(msg.mine ? 'You' : msg.name)}</strong><time>${new Date(msg.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div><div class="bubble">${bubble}</div>${actions}<div class="reaction-strip">${reactionButtons}</div></div></div>`;
+  }).join('') : `<div class="search-empty">No messages match “${esc(state.search)}”.</div>`;
+  if (incoming && !nearBottom && !state.search) { state.unread += 1; renderUnread(); }
+  else if (nearBottom || !incoming) { panel.scrollTop = panel.scrollHeight; if (!incoming) { state.unread = 0; renderUnread(); } }
 }
 
 function toggleReaction(messageId, emoji) {
