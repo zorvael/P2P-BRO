@@ -1,11 +1,13 @@
 # Near — private chat, directly
 
-Near is a lightweight browser chat room built on WebRTC data channels. One person hosts a room and shares an invite link; guests connect to the host and messages travel peer to peer. The host relays guest messages so everyone in the room shares one conversation. Live typing indicators and quick emoji reactions make the conversation feel more natural. No chat history is stored by this app.
+Near is a lightweight browser chat room built on WebRTC. One person hosts a room and shares an invite link; guests request access and connect through the host. Text and files travel over encrypted WebRTC data channels, with the host relaying guest messages so everyone in the room shares one conversation. Voice chat uses WebRTC audio calls between participants. Messages can disappear after a chosen interval, and senders can see read receipts. No chat history is stored by this app.
 
 ## Requirements
 
 - Node.js 20 or newer and npm
 - A modern browser with WebRTC support
+- Microphone access is needed only when a participant joins voice chat
+- Shared files must be 5 MB or smaller
 - Internet access for the default public PeerJS signaling broker and Google Fonts. For production, configure your own signaling service and TURN server.
 
 ## Run locally
@@ -27,6 +29,10 @@ Build a production bundle with `npm run build`. Preview it locally with `npm run
 - Once established, chat payloads travel over WebRTC data channels. The host relays messages among guests; the signaling service does not carry chat text.
 - WebRTC encrypts data-channel traffic in transit (DTLS). A signaling broker can still observe peer IDs and connection metadata. Treat the public broker as a development default, not a privacy guarantee.
 - WebRTC can fail across restrictive NATs without TURN. Set a TURN server with short-lived credentials for reliable production use.
+- Voice participants create direct WebRTC audio calls; microphone permission is requested only after tapping Voice. Voice calls use a mesh, so keep rooms small.
+- File attachments travel through the host over WebRTC and are limited to 5 MB. The app does not upload them to a file server.
+- Disappearing-message choices apply to messages sent after selecting the timer. Every participant removes the message when its expiry time arrives; the timer is not a substitute for preventing screenshots or copies.
+- Read receipts show which connected participants received and rendered a message in their open room.
 
 ## Configure signaling and ICE
 
