@@ -25,7 +25,7 @@ function peerOptions() {
 function renderLanding() {
   app.innerHTML = `
     <main class="landing">
-      <nav class="topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><span class="nav-note"><i class="status-dot"></i> End-to-end encrypted by WebRTC</span></nav>
+      <nav class="topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><span class="nav-note"><i class="status-dot"></i> Encrypted in transit by WebRTC</span></nav>
       <section class="hero">
         <div class="eyebrow"><span class="sparkle">✳</span> A quieter kind of conversation</div>
         <h1>Some things are<br /><em>better shared</em> directly.</h1>
