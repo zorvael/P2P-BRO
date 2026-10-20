@@ -684,6 +684,7 @@ function sendMessage(event) {
   input.value = '';
   document.querySelector('#send-btn').disabled = true;
   renderMessages();
+  input.focus({ preventScroll: true });
 }
 
 function updatePeople() {
