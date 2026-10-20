@@ -36,6 +36,11 @@ Build a production bundle with `pnpm build`. Preview it locally with `pnpm previ
 - Disappearing-message choices apply to messages sent after selecting the timer. Every participant removes the message when its expiry time arrives; the timer is not a substitute for preventing screenshots or copies.
 - Delivery receipts show which connected participants received and rendered a message in their open room.
 - Rooms accept at most four participants; extra join attempts receive a clear room-full response. Incoming text, file, and message-update events have per-peer rate limits and duplicate message IDs are ignored.
+- The **Network** panel reports chat and voice state for each peer independently. It polls the browser's `RTCPeerConnection.getStats()` when available and shows selected candidate types, RTT, inbound media packet loss, and jitter only when the browser provides those values. Unavailable values stay marked unavailable. Packet loss and jitter describe received media RTP, not data-channel packets.
+- The route is labelled **Direct** only when stats identify the selected candidate pair and both candidate types are available with no relay candidate. A selected relay candidate is labelled **Relayed via TURN**. If the selected pair is missing, the route is **Unknown**; no IP address, candidate address, ICE username fragment, or credential is rendered. These are local-browser observations, not a guarantee about what every participant sees.
+- Recovery watches ICE failures and prolonged disconnects. It retries with a four-attempt exponential backoff (1, 2, 4, then 8 seconds), deduplicates overlapping connections, and holds a working voice call until a replacement call is ready. Guests use an in-memory resume token so the host can approve a returning connection without another prompt. The token is not persisted and is never displayed.
+- PeerJS 1.5.x owns the offer/answer flow. Its exposed peer connection does not provide this app a supported renegotiation path for an ICE restart; `RTCPeerConnection.restartIce()` must be signaled through a new offer/answer exchange. Recovery therefore creates a fresh PeerJS data or media connection, which performs a new ICE negotiation through the configured PeerJS signaling service. This can briefly interrupt chat and may fail if that signaling service is unavailable.
+- TURN is used only when ICE selects a relay candidate. With no TURN server configured, restrictive NATs or firewalls can prevent reconnection. The dashboard reports a relay only from the selected pair stats; STUN discovery or candidate gathering alone does not prove that the live route is direct.
 
 ## Configure signaling and ICE
 
@@ -49,7 +54,7 @@ VITE_PEER_SECURE=true
 VITE_ICE_SERVERS=[{"urls":"stun:stun.example.com:3478"},{"urls":"turn:turn.example.com:3478","username":"short-lived-user","credential":"short-lived-password"}]
 ```
 
-The signaling server must support PeerJS server endpoints and secure WebSockets for HTTPS deployments. A TURN service such as coturn is separate from the PeerJS broker. Use credentials that expire; values prefixed with `VITE_` are embedded in the public browser bundle, so never put long-lived secrets in them. Leave `VITE_ICE_SERVERS` unset to use the browser's WebRTC defaults.
+The signaling server must support PeerJS server endpoints and secure WebSockets for HTTPS deployments. A TURN service such as coturn is separate from the PeerJS broker. Use credentials that expire; values prefixed with `VITE_` are embedded in the public browser bundle, so never put long-lived secrets in them. Leave `VITE_ICE_SERVERS` unset to use the browser's WebRTC defaults. A public GitHub Pages bundle cannot keep TURN credentials secret; production should issue short-lived TURN credentials from a trusted service.
 
 The public broker is not guaranteed to be available and is not suitable as a production SLA. For a deployable setup, operate a PeerServer-compatible service and TURN server, then build with the appropriate `VITE_` settings.
 
