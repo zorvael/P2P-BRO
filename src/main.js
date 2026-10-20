@@ -195,7 +195,11 @@ function applyMessageUpdate(type, messageId, actorId, text) {
   if (type === 'edit' && typeof text === 'string' && text.trim() && text.length <= 2000) {
     message.text = text.trim();
     message.edited = true;
-  } else if (type === 'delete') message.deleted = true;
+  } else if (type === 'delete') {
+    message.deleted = true;
+    message.text = '';
+    message.reactions = {};
+  }
   renderMessages();
 }
 
@@ -447,7 +451,7 @@ function renderMessages({ incoming = false } = {}) {
       const selected = Boolean(state.peer?.id && actors[state.peer.id]);
       return `<button type="button" class="reaction ${selected ? 'selected' : ''}" data-reaction="${emoji}" data-message="${esc(msg.id)}" aria-label="React ${emoji}${count ? `, ${count} reactions` : ''}" aria-pressed="${selected}">${emoji}${count ? `<span>${count}</span>` : ''}</button>`;
     }).join('');
-    const actions = `<div class="message-actions"><button type="button" data-message-action="reply" data-message="${esc(msg.id)}">Reply</button><button type="button" data-message-action="copy" data-message="${esc(msg.id)}">Copy</button>${msg.mine && !msg.deleted ? `<button type="button" data-message-action="edit" data-message="${esc(msg.id)}">Edit</button><button type="button" data-message-action="delete" data-message="${esc(msg.id)}">Delete</button>` : ''}</div>`;
+    const actions = `<div class="message-actions">${!msg.deleted ? `<button type="button" data-message-action="reply" data-message="${esc(msg.id)}">Reply</button><button type="button" data-message-action="copy" data-message="${esc(msg.id)}">Copy</button>${msg.mine ? `<button type="button" data-message-action="edit" data-message="${esc(msg.id)}">Edit</button><button type="button" data-message-action="delete" data-message="${esc(msg.id)}">Delete</button>` : ''}` : ''}</div>`;
     const quote = msg.replyTo ? `<div class="quoted-message"><strong>${esc(msg.replyTo.name)}</strong><span>${renderText(msg.replyTo.text)}</span></div>` : '';
     const bubble = msg.deleted ? '<em>This message was deleted</em>' : `${quote}${renderText(msg.text)}${msg.edited ? '<small class="edited-label"> · edited</small>' : ''}`;
     return `<div class="message-row ${msg.mine ? 'mine' : ''}"><span class="avatar ${msg.mine ? 'avatar-me' : 'avatar-0'}">${esc(initials(msg.name))}</span><div class="message-body"><div class="message-meta"><strong>${esc(msg.mine ? 'You' : msg.name)}</strong><time>${new Date(msg.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div><div class="bubble">${bubble}</div>${actions}<div class="reaction-strip">${reactionButtons}</div></div></div>`;
