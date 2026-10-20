@@ -90,3 +90,7 @@ test('disappearing messages and read receipts synchronize through the room host'
   assert.match(source, /type: 'receipt'/);
   assert.match(source, /read-receipt/);
 });
+
+test('sending a message keeps the composer focused for continuous mobile typing', () => {
+  assert.match(source, /input\.focus\(\{ preventScroll: true \}\)/);
+});
