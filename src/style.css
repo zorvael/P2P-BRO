@@ -25,3 +25,63 @@
 
 .file-btn{width:31px;height:31px;flex:none;border:1px solid var(--line);border-radius:5px;background:transparent;color:#788874;font:20px 'DM Sans';cursor:pointer}.file-btn:disabled{opacity:.35;cursor:not-allowed}.expiry-select{flex:none;border:0;background:transparent;color:#83857a;font:10px 'DM Sans';outline:none;max-width:65px}.voice-btn.active{background:#e8eee5;border-color:#c7d4c2;color:#466448}.file-attachment{display:flex;align-items:center;gap:10px;min-width:180px;max-width:min(340px,65vw);padding:10px 12px;border:1px solid #e2e3dc;border-radius:7px;background:#fffefa;color:inherit;text-decoration:none}.file-icon{width:31px;height:31px;display:grid;place-items:center;background:#edf1e9;border-radius:50%;color:#567052;font-size:17px}.file-attachment span:last-child{min-width:0;display:grid;gap:3px}.file-attachment strong{max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:600}.file-attachment small,.read-receipt,.expiry-label{font-size:9px;color:#95968b}.read-receipt,.expiry-label{display:block;margin-top:4px}.message-row.mine .read-receipt{text-align:right}.audio-players{display:none}.composer select{cursor:pointer}body.dark .file-attachment{background:#252a26;border-color:#454a43}body.dark .file-icon{background:#344034;color:#c2d5b9}body.dark .file-btn,body.dark .expiry-select{color:#bbc5b5}
 .retry-btn{margin-left:auto;border:1px solid #dcdad2;border-radius:4px;background:#fffefa;color:#49634d;padding:5px 9px;font:10px 'DM Sans';cursor:pointer}.retry-btn:disabled{opacity:.55;cursor:wait}.connection-banner #search-toggle{margin-left:0}
+@media(max-width:700px){
+  .chat-shell{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column;padding:0 14px calc(6px + env(safe-area-inset-bottom));overflow:hidden}
+  .chat-topbar{height:auto;min-height:74px;flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"brand actions" "room room";gap:7px 10px;padding:9px 0 8px}
+  .chat-topbar>.brand{grid-area:brand;align-self:center}
+  .room-label{grid-area:room;min-width:0;gap:7px}
+  .room-label strong{font-size:11px}
+  .room-label small{font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70vw}
+  .room-symbol{width:23px;height:23px;flex:none}
+  .top-actions{grid-area:actions;gap:6px;justify-content:flex-end}
+  .top-actions .outline-btn{min-height:36px;padding:7px 9px;font-size:11px;white-space:nowrap}
+  .top-actions #theme-btn{width:35px;padding:6px;flex:none}
+  .top-actions #voice-btn span{margin-left:4px}
+  .top-actions #invite-btn{padding:7px 9px}
+  .top-actions #leave-btn{padding:2px 5px}
+  .chat-layout{flex:1;min-height:0;max-height:none;display:flex;flex-direction:column}
+  .people-panel{flex:none;max-height:106px;overflow-y:auto;border:0;border-bottom:1px solid var(--line);padding:8px 0 6px}
+  .panel-heading{margin:0 0 5px;font-size:8px}
+  #people-list{display:flex;gap:13px;overflow-x:auto;scrollbar-width:none}
+  #people-list::-webkit-scrollbar{display:none}
+  .person{flex:none;display:inline-flex;margin:2px 0;gap:6px}
+  .person .avatar{width:26px;height:26px;font-size:9px}
+  .person-name{font-size:10px}
+  .person-name small{font-size:8px}
+  .join-requests{margin:6px 0 0;white-space:nowrap}
+  .request-heading{display:inline-flex;gap:8px;margin:0 8px 0 0;font-size:8px}
+  .join-request{max-width:75vw;padding:5px 7px;margin:0 5px 0 0}
+  .request-copy strong{font-size:9px}
+  .privacy-note{display:none}
+  .conversation{flex:1;min-height:0;padding:0 0 4px}
+  .connection-banner{height:auto;min-height:40px;flex:none;gap:7px;font-size:9px}
+  .connection-banner>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .search-toggle{flex:none}
+  .retry-btn{flex:none;font-size:9px;padding:5px 7px}
+  .message-search{flex:none;padding:6px 0}
+  .messages{position:relative;flex:1;min-height:0;padding:12px 0}
+  .messages>.empty-state{top:50%;left:50%;width:min(88%,340px);transform:translate(-50%,-50%)}
+  .empty-state h2{font-size:21px}
+  .empty-state p{font-size:11px}
+  .message-row{max-width:94%}
+  .composer{flex:none;height:49px;gap:7px;padding:0 7px}
+  .composer-symbol{font-size:15px;padding:0 2px}
+  .file-btn{width:29px;height:29px}
+  .expiry-select{max-width:54px;font-size:9px}
+  .composer input{font-size:12px}
+  .composer input::placeholder{font-size:11px}
+  .send-btn{width:31px;height:31px;flex:none}
+  .composer-foot{flex:none;font-size:8px;padding:6px 2px 2px}
+  .new-messages{bottom:72px}
+}
+@media(max-width:380px){
+  .chat-shell{padding-left:10px;padding-right:10px}
+  .top-actions{gap:4px}
+  .top-actions .outline-btn{padding:6px 7px;font-size:10px}
+  .top-actions #theme-btn{width:32px}
+  .top-actions #voice-btn span{display:none}
+  .top-actions #voice-btn{width:35px;font-size:15px}
+  .top-actions #invite-btn{font-size:10px;padding:6px}
+  .expiry-select{max-width:48px}
+  .composer{gap:5px}
+}
