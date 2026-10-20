@@ -2,7 +2,8 @@ import Peer from 'peerjs';
 import './style.css';
 
 const app = document.querySelector('#app');
-const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, messages: [], copied: false };
+const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null };
+const REACTIONS = ['❤️', '😂', '👍', '🎉', '😮'];
 const esc = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const initials = (name) => name.trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'Y';
 
@@ -66,12 +67,16 @@ function renderRoom() {
     <main class="chat-shell">
       <header class="chat-topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><div class="room-label"><span class="room-symbol">✳</span><div><strong>your little corner</strong><small id="room-subtitle">Connecting to your room…</small></div></div><div class="top-actions"><button id="invite-btn" class="outline-btn">Invite someone <span>↗</span></button><button id="leave-btn" class="icon-btn" title="Leave room" aria-label="Leave room">×</button></div></header>
       <div class="chat-layout"><aside class="people-panel"><div class="panel-heading"><span>IN THIS ROOM</span><span id="people-count" class="count-pill">1</span></div><div id="people-list"></div><div id="join-requests" class="join-requests"></div><div class="privacy-note"><span class="privacy-icon">⌑</span><div><strong>Just between you</strong><p>Messages travel directly between browsers. Nothing is stored on a server.</p></div></div></aside>
-      <section class="conversation"><div id="connection-banner" class="connection-banner"><i class="status-dot"></i><span id="connection-text">Setting up your private connection</span></div><div id="messages" class="messages"><div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>A little space, just for you.</h2><p>Share an invite when you’re ready. The conversation begins when they arrive.</p></div></div><form id="message-form" class="composer"><button type="button" class="composer-symbol" title="This message is sent directly">✳</button><input id="message-input" maxlength="2000" placeholder="Write something thoughtful…" autocomplete="off" disabled /><button id="send-btn" class="send-btn" type="submit" disabled aria-label="Send message">↑</button></form><div class="composer-foot"><span>Messages are not saved after you leave.</span><span><kbd>↵</kbd> to send</span></div></section></div>
+      <section class="conversation"><div id="connection-banner" class="connection-banner"><i class="status-dot"></i><span id="connection-text">Setting up your private connection</span></div><div id="messages" class="messages"><div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>A little space, just for you.</h2><p>Share an invite when you’re ready. The conversation begins when they arrive.</p></div></div><div id="typing-indicator" class="typing-indicator" aria-live="polite"></div><form id="message-form" class="composer"><button type="button" class="composer-symbol" title="This message is sent directly">✳</button><input id="message-input" maxlength="2000" placeholder="Write something thoughtful…" autocomplete="off" disabled /><button id="send-btn" class="send-btn" type="submit" disabled aria-label="Send message">↑</button></form><div class="composer-foot"><span>Messages are not saved after you leave.</span><span><kbd>↵</kbd> to send</span></div></section></div>
       <div id="toast" class="toast" role="status"></div>
     </main>`;
   document.querySelector('#invite-btn').addEventListener('click', shareInvite);
   document.querySelector('#leave-btn').addEventListener('click', leaveRoom);
   document.querySelector('#message-form').addEventListener('submit', sendMessage);
+  document.querySelector('#messages').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-reaction]');
+    if (button) toggleReaction(button.dataset.message, button.dataset.reaction);
+  });
   document.querySelector('#join-requests').addEventListener('click', (event) => {
     const button = event.target.closest('[data-join-action]');
     if (!button) return;
@@ -80,6 +85,9 @@ function renderRoom() {
   });
   document.querySelector('#message-input').addEventListener('input', (event) => {
     document.querySelector('#send-btn').disabled = !event.target.value.trim() || !connectedCount();
+    broadcastTyping(Boolean(event.target.value.trim()));
+    clearTimeout(state.typingTimer);
+    if (event.target.value.trim()) state.typingTimer = setTimeout(() => broadcastTyping(false), 1100);
   });
   updatePeople();
 }
@@ -142,6 +150,7 @@ function addConnection(conn, outgoing = false) {
   });
   conn.on('data', (data) => handleData(conn.peer, data));
   conn.on('close', () => {
+    setTyping(entry.name, false);
     state.pending.delete(conn.peer);
     state.connections.delete(conn.peer);
     renderJoinRequests(); updatePeople(); renderMessages();
@@ -178,14 +187,67 @@ function handleData(peerId, data) {
     return;
   }
   if (!entry.connected) return;
-  if (data.type !== 'message' || typeof data.text !== 'string' || data.text.length < 1 || data.text.length > 2000) return;
-  const text = data.text.trim();
-  if (!text) return;
-  const senderName = typeof data.name === 'string' ? data.name.trim().slice(0, 32) : entry.name;
-  state.messages.push({ name: senderName || entry.name, text, time: Date.now(), mine: false });
-  renderMessages();
-  // Relay peer messages through the room host so guests can share a conversation.
-  if (state.isHost) state.connections.forEach((other, id) => { if (id !== peerId && other.connected) other.conn.send({ type: 'message', name: senderName || entry.name, text }); });
+  if (data.type === 'typing') {
+    const name = state.isHost ? (entry.name || 'Someone') : (typeof data.name === 'string' ? data.name.trim().slice(0, 32) || entry.name : entry.name || 'Someone');
+    setTyping(name, Boolean(data.active));
+    if (state.isHost) relayToOthers(peerId, { type: 'typing', name, active: Boolean(data.active) });
+    return;
+  }
+  if (data.type === 'message') {
+    if (typeof data.text !== 'string' || data.text.length < 1 || data.text.length > 2000 || typeof data.id !== 'string' || data.id.length > 80) return;
+    const text = data.text.trim();
+    if (!text) return;
+    const senderName = entry.name || 'Guest';
+    state.messages.push({ id: data.id, name: senderName, text, time: Date.now(), mine: false, reactions: {} });
+    renderMessages();
+    // Relay peer messages through the room host so guests can share one conversation.
+    if (state.isHost) relayToOthers(peerId, { type: 'message', id: data.id, name: senderName, text });
+    return;
+  }
+  if (data.type === 'reaction') {
+    if (typeof data.messageId !== 'string' || data.messageId.length > 80 || !REACTIONS.includes(data.emoji)) return;
+    const actorId = state.isHost ? peerId : (typeof data.actorId === 'string' ? data.actorId.slice(0, 100) : peerId);
+    const actorName = state.isHost ? entry.name : (typeof data.name === 'string' ? data.name.trim().slice(0, 32) || entry.name : entry.name);
+    applyReaction(data.messageId, data.emoji, actorId, actorName, Boolean(data.active));
+    if (state.isHost) relayToOthers(peerId, { type: 'reaction', messageId: data.messageId, emoji: data.emoji, actorId, name: actorName, active: Boolean(data.active) });
+  }
+}
+
+function relayToOthers(excludedPeerId, payload) {
+  state.connections.forEach((other, id) => {
+    if (id !== excludedPeerId && other.connected) other.conn.send(payload);
+  });
+}
+
+function broadcastTyping(active) {
+  if (active === state.localTyping) return;
+  state.localTyping = active;
+  const payload = { type: 'typing', active };
+  if (state.isHost) relayToOthers(null, payload);
+  else {
+    const host = [...state.connections.values()].find((entry) => entry.connected);
+    if (host) host.conn.send(payload);
+  }
+}
+
+function setTyping(name, active) {
+  if (!name) return;
+  const current = state.typing.get(name);
+  if (current) clearTimeout(current);
+  if (active) state.typing.set(name, setTimeout(() => {
+    state.typing.delete(name);
+    renderTyping();
+  }, 3000));
+  else state.typing.delete(name);
+  renderTyping();
+}
+
+function renderTyping() {
+  const indicator = document.querySelector('#typing-indicator');
+  if (!indicator) return;
+  const names = [...state.typing.keys()];
+  indicator.textContent = names.length ? `${names.slice(0, 2).join(' and ')}${names.length > 2 ? ` +${names.length - 2}` : ''} ${names.length === 1 ? 'is' : 'are'} typing…` : '';
+  indicator.classList.toggle('visible', names.length > 0);
 }
 
 function renderJoinRequests() {
@@ -226,14 +288,16 @@ function sendMessage(event) {
   const input = document.querySelector('#message-input');
   const text = input.value.trim();
   if (!text || text.length > 2000 || !connectedCount()) return;
-  const message = { type: 'message', name: state.name, text };
+  broadcastTyping(false);
+  clearTimeout(state.typingTimer);
+  const message = { type: 'message', id: makeId(), name: state.name, text };
   if (state.isHost) state.connections.forEach((entry) => { if (entry.connected) entry.conn.send(message); });
   else {
     const host = [...state.connections.values()].find((entry) => entry.connected);
     if (!host) return;
     host.conn.send(message);
   }
-  state.messages.push({ name: state.name, text, time: Date.now(), mine: true });
+  state.messages.push({ ...message, time: Date.now(), mine: true, reactions: {} });
   input.value = '';
   document.querySelector('#send-btn').disabled = true;
   renderMessages();
@@ -255,8 +319,45 @@ function renderMessages() {
     panel.innerHTML = `<div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>${connectedCount() ? 'The room is yours now.' : 'A little space, just for you.'}</h2><p>${connectedCount() ? 'Say hello. Your words travel directly between browsers.' : 'Share an invite when you’re ready. The conversation begins when they arrive.'}</p></div>`;
     return;
   }
-  panel.innerHTML = state.messages.map((msg) => `<div class="message-row ${msg.mine ? 'mine' : ''}"><span class="avatar ${msg.mine ? 'avatar-me' : 'avatar-0'}">${esc(initials(msg.name))}</span><div class="message-body"><div class="message-meta"><strong>${esc(msg.mine ? 'You' : msg.name)}</strong><time>${new Date(msg.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div><div class="bubble">${esc(msg.text).replace(/\n/g, '<br>')}</div></div></div>`).join('');
+  panel.innerHTML = state.messages.map((msg) => {
+    const reactionButtons = REACTIONS.map((emoji) => {
+      const actors = msg.reactions?.[emoji] || {};
+      const count = Object.keys(actors).length;
+      const selected = Boolean(state.peer?.id && actors[state.peer.id]);
+      return `<button type="button" class="reaction ${selected ? 'selected' : ''}" data-reaction="${emoji}" data-message="${esc(msg.id)}" aria-label="React ${emoji}${count ? `, ${count} reactions` : ''}" aria-pressed="${selected}">${emoji}${count ? `<span>${count}</span>` : ''}</button>`;
+    }).join('');
+    return `<div class="message-row ${msg.mine ? 'mine' : ''}"><span class="avatar ${msg.mine ? 'avatar-me' : 'avatar-0'}">${esc(initials(msg.name))}</span><div class="message-body"><div class="message-meta"><strong>${esc(msg.mine ? 'You' : msg.name)}</strong><time>${new Date(msg.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div><div class="bubble">${esc(msg.text).replace(/\n/g, '<br>')}</div><div class="reaction-strip">${reactionButtons}</div></div></div>`;
+  }).join('');
   panel.scrollTop = panel.scrollHeight;
+}
+
+function toggleReaction(messageId, emoji) {
+  if (!REACTIONS.includes(emoji) || !state.peer?.id || !connectedCount()) return;
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message) return;
+  const active = !message.reactions?.[emoji]?.[state.peer.id];
+  applyReaction(messageId, emoji, state.peer.id, state.name, active);
+  const payload = { type: 'reaction', messageId, emoji, actorId: state.peer.id, name: state.name, active };
+  if (state.isHost) relayToOthers(null, payload);
+  else {
+    const host = [...state.connections.values()].find((entry) => entry.connected);
+    if (host) host.conn.send(payload);
+  }
+}
+
+function applyReaction(messageId, emoji, actorId, actorName, active) {
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message || !actorId) return;
+  message.reactions ||= {};
+  message.reactions[emoji] ||= {};
+  if (active) message.reactions[emoji][actorId] = actorName || 'Guest';
+  else delete message.reactions[emoji][actorId];
+  if (!Object.keys(message.reactions[emoji]).length) delete message.reactions[emoji];
+  renderMessages();
+}
+
+function makeId() {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 function connectedCount() { return [...state.connections.values()].filter((entry) => entry.connected).length; }
@@ -278,6 +379,10 @@ function alertToast(message) {
   clearTimeout(alertToast.timer); alertToast.timer = setTimeout(() => toast.classList.remove('show'), 3400);
 }
 function leaveRoom() {
+  clearTimeout(state.typingTimer);
+  state.typing.forEach(clearTimeout);
+  state.typing.clear();
+  state.localTyping = false;
   if (state.peer) state.peer.destroy();
   state.connections.clear(); state.pending.clear(); state.messages = []; state.peer = null;
   history.replaceState({}, '', location.pathname);
