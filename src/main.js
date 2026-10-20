@@ -1,8 +1,9 @@
 import Peer from 'peerjs';
 import './style.css';
+import { canAcceptGuest, createEventLimiter, isValidFileMessage, isValidTextMessage, normalizeExpiry } from './protocol.js';
 
 const app = document.querySelector('#app');
-const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null, replyTo: null, editingId: null, unread: 0, search: '', expiryMs: 0, expiryTimers: new Map(), localStream: null, voiceActive: false, voiceRoster: [], calls: new Map() };
+const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null, replyTo: null, editingId: null, unread: 0, search: '', expiryMs: 0, expiryTimers: new Map(), localStream: null, voiceActive: false, voiceRoster: [], calls: new Map(), rateLimit: createEventLimiter({ message: { windowMs: 10_000, limit: 20 }, file: { windowMs: 60_000, limit: 3 }, update: { windowMs: 10_000, limit: 40 } }) };
 const REACTIONS = ['❤️', '😂', '👍', '🎉', '😮'];
 const esc = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const initials = (name) => name.trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'Y';
@@ -99,13 +100,14 @@ function renderRoom() {
     <main class="chat-shell">
       <header class="chat-topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><div class="room-label"><span class="room-symbol">✳</span><div><strong>your little corner</strong><small id="room-subtitle">Connecting to your room…</small></div></div><div class="top-actions"><button id="theme-btn" class="outline-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button><button id="voice-btn" class="outline-btn voice-btn" type="button" aria-label="Join voice chat">♫ <span>Voice</span></button><button id="invite-btn" class="outline-btn">Invite someone <span>↗</span></button><button id="leave-btn" class="icon-btn" title="Leave room" aria-label="Leave room">×</button></div></header>
       <div class="chat-layout"><aside class="people-panel"><div class="panel-heading"><span>IN THIS ROOM</span><span id="people-count" class="count-pill">1</span></div><div id="people-list"></div><div id="join-requests" class="join-requests"></div><div class="privacy-note"><span class="privacy-icon">⌑</span><div><strong>Just between you</strong><p>Messages travel directly between browsers. Nothing is stored on a server.</p></div></div></aside>
-      <section class="conversation"><div id="connection-banner" class="connection-banner"><i class="status-dot"></i><span id="connection-text">Setting up your private connection</span><button id="search-toggle" class="search-toggle" type="button" aria-label="Search messages" title="Search messages">⌕</button></div><div id="message-search" class="message-search hidden"><input id="search-input" type="search" placeholder="Search this conversation…" aria-label="Search messages" /><button id="search-clear" type="button" aria-label="Clear search">×</button></div><div id="messages" class="messages"><div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>A little space, just for you.</h2><p>Share an invite when you’re ready. The conversation begins when they arrive.</p></div></div><button id="new-messages" class="new-messages hidden" type="button">↓ New messages</button><div id="typing-indicator" class="typing-indicator" aria-live="polite"></div><div id="reply-preview" class="reply-preview hidden"></div><form id="message-form" class="composer"><button type="button" class="composer-symbol" title="This message is sent directly">✳</button><button id="file-btn" type="button" class="file-btn" title="Share a file" aria-label="Share a file" disabled>＋</button><input id="file-input" class="hidden" type="file" /><select id="expiry-select" class="expiry-select" aria-label="Message expiry" title="Disappearing messages"><option value="0">Keep</option><option value="60000">1 min</option><option value="3600000">1 hour</option><option value="86400000">1 day</option></select><input id="message-input" maxlength="2000" placeholder="Write something thoughtful…" autocomplete="off" disabled /><button id="send-btn" class="send-btn" type="submit" disabled aria-label="Send message">↑</button></form><div class="composer-foot"><span>Messages are not saved after you leave.</span><span><kbd>↵</kbd> to send</span></div><div id="audio-players" class="audio-players" aria-label="Voice chat audio"></div></section></div>
+      <section class="conversation"><div id="connection-banner" class="connection-banner"><i class="status-dot"></i><span id="connection-text">Setting up your private connection</span><button id="retry-btn" class="retry-btn hidden" type="button">Retry</button><button id="search-toggle" class="search-toggle" type="button" aria-label="Search messages" title="Search messages">⌕</button></div><div id="message-search" class="message-search hidden"><input id="search-input" type="search" placeholder="Search this conversation…" aria-label="Search messages" /><button id="search-clear" type="button" aria-label="Clear search">×</button></div><div id="messages" class="messages"><div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>A little space, just for you.</h2><p>Share an invite when you’re ready. The conversation begins when they arrive.</p></div></div><button id="new-messages" class="new-messages hidden" type="button">↓ New messages</button><div id="typing-indicator" class="typing-indicator" aria-live="polite"></div><div id="reply-preview" class="reply-preview hidden"></div><form id="message-form" class="composer"><button type="button" class="composer-symbol" title="This message is sent directly">✳</button><button id="file-btn" type="button" class="file-btn" title="Share a file" aria-label="Share a file" disabled>＋</button><input id="file-input" class="hidden" type="file" /><select id="expiry-select" class="expiry-select" aria-label="Message expiry" title="Disappearing messages"><option value="0">Keep</option><option value="60000">1 min</option><option value="3600000">1 hour</option><option value="86400000">1 day</option></select><input id="message-input" maxlength="2000" placeholder="Write something thoughtful…" autocomplete="off" disabled /><button id="send-btn" class="send-btn" type="submit" disabled aria-label="Send message">↑</button></form><div class="composer-foot"><span>Messages are not saved after you leave.</span><span><kbd>↵</kbd> to send</span></div><div id="audio-players" class="audio-players" aria-label="Voice chat audio"></div></section></div>
       <div id="toast" class="toast" role="status"></div>
     </main>`;
   document.querySelector('#invite-btn').addEventListener('click', shareInvite);
   document.querySelector('#leave-btn').addEventListener('click', leaveRoom);
   document.querySelector('#message-form').addEventListener('submit', sendMessage);
   document.querySelector('#voice-btn').addEventListener('click', toggleVoice);
+  document.querySelector('#retry-btn').addEventListener('click', retryJoinRoom);
   document.querySelector('#file-btn').addEventListener('click', () => document.querySelector('#file-input').click());
   document.querySelector('#file-input').addEventListener('change', async (event) => {
     const file = event.target.files?.[0];
@@ -180,6 +182,7 @@ function updateVoiceUI() {
   button.innerHTML = state.voiceActive ? '♫ <span>Leave voice</span>' : '♫ <span>Voice</span>';
   button.setAttribute('aria-label', state.voiceActive ? 'Leave voice chat' : 'Join voice chat');
   button.title = state.voiceActive ? `In voice chat with ${state.voiceRoster.length} participant${state.voiceRoster.length === 1 ? '' : 's'}` : 'Join voice chat';
+  button.disabled = !state.isHost && connectedCount() === 0;
 }
 
 async function toggleVoice() {
@@ -198,7 +201,7 @@ async function toggleVoice() {
   }
 }
 
-function stopVoice() {
+function stopVoice(notifyHost = true) {
   state.voiceActive = false;
   state.calls.forEach((call) => call.close());
   state.calls.clear();
@@ -206,7 +209,7 @@ function stopVoice() {
   state.localStream?.getTracks().forEach((track) => track.stop());
   state.localStream = null;
   if (state.isHost) broadcastVoiceRoster();
-  else sendToHost({ type: 'voice-left', name: state.name });
+  else if (notifyHost) sendToHost({ type: 'voice-left', name: state.name });
   updateVoiceUI();
 }
 
@@ -439,17 +442,37 @@ function joinRoom(raw) {
   state.peer = new Peer(undefined, peerOptions());
   bindPeerEvents();
   state.peer.on('open', () => {
-    const conn = state.peer.connect(roomId, { reliable: true, metadata: { name: state.name } });
-    addConnection(conn, true);
+    connectToRoom();
   });
+}
+
+function connectToRoom() {
+  if (!state.peer || state.peer.destroyed || !state.roomId) return;
+  const conn = state.peer.connect(state.roomId, { reliable: true, metadata: { name: state.name } });
+  addConnection(conn, true);
+}
+
+function retryJoinRoom() {
+  if (state.isHost || !state.roomId) return;
+  const button = document.querySelector('#retry-btn');
+  button.disabled = true;
+  document.querySelector('#connection-text').textContent = 'Trying to reconnect…';
+  state.connections.forEach((entry) => entry.conn.close());
+  state.connections.clear();
+  if (state.peer && !state.peer.destroyed) state.peer.destroy();
+  state.peer = new Peer(undefined, peerOptions());
+  bindPeerEvents();
+  state.peer.on('open', connectToRoom);
+  setTimeout(() => { if (button.isConnected) button.disabled = false; }, 2500);
 }
 
 function bindPeerEvents() {
   state.peer.on('call', handleIncomingVoiceCall);
   state.peer.on('error', (err) => {
-    const messages = { 'peer-unavailable': 'We couldn’t find that room. Check the invite and try again.', 'network': 'The signaling service is unreachable. Check your connection and try again.', 'server-error': 'The signaling service had a moment. Please try again shortly.', 'browser-incompatible': 'This browser does not support WebRTC. Try a recent version of Chrome, Firefox, Safari, or Edge.' };
+    const messages = { 'peer-unavailable': 'Couldn’t find this room. It may be closed or the invite may be old; ask the host for a fresh link.', 'network': 'The signaling service is unreachable. Check your connection and try again.', 'server-error': 'The signaling service had a moment. Please try again shortly.', 'browser-incompatible': 'This browser does not support WebRTC. Try a recent version of Chrome, Firefox, Safari, or Edge.' };
     alertToast(messages[err.type] || 'Something interrupted the connection. Please try again.');
     document.querySelector('#connection-text').textContent = messages[err.type] || 'Connection interrupted';
+    document.querySelector('#retry-btn')?.classList.toggle('hidden', state.isHost || !['peer-unavailable', 'network', 'server-error'].includes(err.type));
   });
   state.peer.on('disconnected', () => {
     document.querySelector('#connection-text').textContent = 'Reconnecting to the room service…';
@@ -458,9 +481,14 @@ function bindPeerEvents() {
 }
 
 function addConnection(conn, outgoing = false) {
-  const entry = { conn, name: outgoing ? 'Host' : 'Guest', connected: false };
+  if (!outgoing && !canAcceptGuest(connectedCount(), state.pending.size)) {
+    const deny = () => { try { conn.send({ type: 'join-denied', reason: 'full' }); } catch {} setTimeout(() => conn.close(), 200); };
+    if (conn.open) deny(); else conn.on('open', deny);
+    return;
+  }
+  const entry = { conn, name: outgoing ? 'Host' : 'Guest', connected: false, voice: false, requested: false };
   if (outgoing) state.connections.set(conn.peer, entry);
-  else state.pending.set(conn.peer, { ...entry, requested: false });
+  else state.pending.set(conn.peer, entry);
   conn.on('open', () => {
     if (!outgoing) return;
     conn.send({ type: 'join-request', name: state.name });
@@ -475,11 +503,16 @@ function addConnection(conn, outgoing = false) {
   conn.on('data', (data) => handleData(conn.peer, data));
   conn.on('close', () => {
     setTyping(entry.name, false);
-    state.pending.delete(conn.peer);
-    if (state.isHost && entry.voice) { entry.voice = false; broadcastVoiceRoster(); }
-    state.connections.delete(conn.peer);
+    if (state.pending.get(conn.peer) === entry) state.pending.delete(conn.peer);
+    const wasInVoice = entry.voice;
+    entry.voice = false;
+    if (state.connections.get(conn.peer) === entry) state.connections.delete(conn.peer);
+    state.rateLimit.clearPeer(conn.peer);
+    if (state.calls.has(conn.peer)) state.calls.get(conn.peer).close();
+    if (state.isHost && wasInVoice) broadcastVoiceRoster();
+    if (!state.isHost && state.voiceActive) stopVoice(false);
     renderJoinRequests(); updatePeople(); renderMessages();
-    if (!connectedCount()) document.querySelector('#connection-text').textContent = state.isHost ? 'Room is open · invite someone to begin' : 'Your guest left the room';
+    if (!connectedCount() && entry.connected) document.querySelector('#connection-text').textContent = state.isHost ? 'Room is open · invite someone to begin' : 'Your guest left the room';
   });
   conn.on('error', () => alertToast('A guest connection was interrupted.'));
 }
@@ -503,16 +536,19 @@ function handleData(peerId, data) {
     updatePeople();
     document.querySelector('#connection-text').textContent = 'Connected directly · you’re in the room';
     document.querySelector('#connection-banner').classList.add('ready');
+    document.querySelector('#retry-btn').classList.add('hidden');
     renderMessages();
     sendToHost({ type: 'voice-roster-request' });
     return;
   }
   if (!state.isHost && data.type === 'join-denied') {
-    alertToast('The host didn’t approve your request.');
+    alertToast(data.reason === 'full' ? 'This room is full (maximum 4 people).' : 'The host didn’t approve your request.');
     entry.conn.close();
     return;
   }
   if (!entry.connected) return;
+  const limitedType = data.type === 'message' ? 'message' : data.type === 'file' ? 'file' : ['reaction', 'edit', 'delete', 'expire'].includes(data.type) ? 'update' : null;
+  if (limitedType && !state.rateLimit(peerId, limitedType)) { alertToast('Too many actions in a short time. Please slow down.'); return; }
   if (state.isHost && data.type === 'voice-roster-request') { broadcastVoiceRoster(); return; }
   if (state.isHost && (data.type === 'voice-join' || data.type === 'voice-left')) {
     entry.voice = data.type === 'voice-join';
@@ -530,14 +566,14 @@ function handleData(peerId, data) {
     return;
   }
   if (data.type === 'message') {
-    if (typeof data.text !== 'string' || data.text.length < 1 || data.text.length > 2000 || typeof data.id !== 'string' || data.id.length > 80) return;
+    if (!isValidTextMessage(data) || state.messages.some((message) => message.id === data.id)) return;
     const text = data.text.trim();
     if (!text) return;
     const senderName = state.isHost ? (entry.name || 'Guest') : (typeof data.name === 'string' ? data.name.trim().slice(0, 32) || entry.name : entry.name || 'Guest');
     const authorId = state.isHost ? peerId : (typeof data.authorId === 'string' ? data.authorId.slice(0, 100) : peerId);
     const replyTo = data.replyTo && typeof data.replyTo.name === 'string' && typeof data.replyTo.text === 'string' ? { id: String(data.replyTo.id || '').slice(0, 80), name: data.replyTo.name.slice(0, 32), text: data.replyTo.text.slice(0, 200) } : null;
-    const expiresAt = Number(data.expiresAt) || 0;
-    if (expiresAt && expiresAt <= Date.now()) return;
+    const expiresAt = normalizeExpiry(data.expiresAt);
+    if (expiresAt === null) return;
     const message = { id: data.id, authorId, name: senderName, text, replyTo, time: Date.now(), mine: false, reactions: {}, expiresAt };
     state.messages.push(message);
     scheduleMessageExpiry(message);
@@ -548,11 +584,12 @@ function handleData(peerId, data) {
     return;
   }
   if (data.type === 'file') {
-    if (typeof data.id !== 'string' || data.id.length > 80 || typeof data.fileName !== 'string' || data.fileName.length > 120 || !Number.isFinite(data.size) || data.size < 0 || data.size > 5 * 1024 * 1024 || !(data.data instanceof ArrayBuffer)) return;
+    if (!isValidFileMessage(data) || state.messages.some((message) => message.id === data.id)) return;
     const authorId = state.isHost ? peerId : (typeof data.authorId === 'string' ? data.authorId.slice(0, 100) : peerId);
     const fileData = { ...data, authorId, name: state.isHost ? entry.name : (typeof data.name === 'string' ? data.name.slice(0, 32) : entry.name) };
-    const expiresAt = Number(fileData.expiresAt) || 0;
-    if (expiresAt && expiresAt <= Date.now()) return;
+    const expiresAt = normalizeExpiry(fileData.expiresAt);
+    if (expiresAt === null) return;
+    fileData.expiresAt = expiresAt;
     const message = makeFileMessage(fileData, false);
     state.messages.push(message);
     scheduleMessageExpiry(message);
@@ -643,7 +680,9 @@ function approveGuest(peerId) {
   const request = state.pending.get(peerId);
   if (!request || !request.requested || !request.conn.open) return;
   state.pending.delete(peerId);
-  state.connections.set(peerId, { conn: request.conn, name: request.name, connected: true, voice: false });
+  request.connected = true;
+  request.voice = false;
+  state.connections.set(peerId, request);
   request.conn.send({ type: 'join-approved', name: state.name });
   renderJoinRequests();
   updatePeople();
@@ -695,6 +734,7 @@ function updatePeople() {
   document.querySelector('#message-input').disabled = !guests.length;
   document.querySelector('#file-btn').disabled = !guests.length;
   document.querySelector('#send-btn').disabled = !guests.length || !document.querySelector('#message-input').value.trim();
+  updateVoiceUI();
   renderJoinRequests();
 }
 
@@ -718,7 +758,7 @@ function renderMessages({ incoming = false } = {}) {
     const quote = msg.replyTo ? `<div class="quoted-message"><strong>${esc(msg.replyTo.name)}</strong><span>${renderText(msg.replyTo.text)}</span></div>` : '';
     const file = msg.fileUrl ? `<a class="file-attachment" href="${esc(msg.fileUrl)}" download="${esc(msg.fileName)}"><span class="file-icon">↧</span><span><strong>${esc(msg.fileName)}</strong><small>${formatFileSize(msg.size)}</small></span></a>` : '';
     const bubble = msg.deleted ? '<em>This message was deleted</em>' : msg.expired ? '<em>This message expired</em>' : `${quote}${file}${msg.text ? renderText(msg.text) : ''}${msg.edited ? '<small class="edited-label"> · edited</small>' : ''}`;
-    const receipt = msg.mine && msg.readBy && Object.keys(msg.readBy).length ? `<small class="read-receipt">Seen by ${esc(Object.values(msg.readBy).join(', '))}</small>` : '';
+    const receipt = msg.mine && msg.readBy && Object.keys(msg.readBy).length ? `<small class="read-receipt">Delivered to ${esc(Object.values(msg.readBy).join(', '))}</small>` : '';
     const expiring = msg.expiresAt && !msg.expired ? '<small class="expiry-label">Disappearing</small>' : '';
     return `<div class="message-row ${msg.mine ? 'mine' : ''}"><span class="avatar ${msg.mine ? 'avatar-me' : 'avatar-0'}">${esc(initials(msg.name))}</span><div class="message-body"><div class="message-meta"><strong>${esc(msg.mine ? 'You' : msg.name)}</strong><time>${new Date(msg.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div><div class="bubble">${bubble}</div>${expiring}${receipt}${actions}<div class="reaction-strip">${reactionButtons}</div></div></div>`;
   }).join('') : `<div class="search-empty">No messages match “${esc(state.search)}”.</div>`;
