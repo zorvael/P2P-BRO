@@ -1,6 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { globalValidation } from '../inbox-worker/src/index.js';
+import globalChatWorker from '../inbox-worker/src/index.js';
+
+const origin = 'https://zorvael.github.io';
+
+test('Global Chat fails closed when the persistent database is not configured', async () => {
+  const response = await globalChatWorker.fetch(new Request('https://worker.example/api/global/status', { headers: { Origin: origin } }), { DB: null, ALLOWED_ORIGINS: origin });
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).error, 'unavailable');
+});
+
+test('Global Chat message feed requires an authenticated session', async () => {
+  const response = await globalChatWorker.fetch(new Request('https://worker.example/api/global/messages', { headers: { Origin: origin } }), { DB: {}, ALLOWED_ORIGINS: origin });
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).error, 'unauthorized');
+  assert.equal(response.headers.get('Access-Control-Allow-Origin'), origin);
+});
 
 test('Global Chat requires a valid adult birth date without retaining it', () => {
   const now = Date.parse('2026-10-21T12:00:00Z');

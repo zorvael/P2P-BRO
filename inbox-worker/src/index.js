@@ -68,7 +68,10 @@ async function handleGlobal(request, env, cors, url) {
   const method = request.method;
   const now = Date.now();
   try {
-    if (path === '/api/global/status' && method === 'GET') return json({ enabled: true, retentionDays: 7 }, 200, cors);
+    if (path === '/api/global/status' && method === 'GET') {
+      await env.DB.prepare('SELECT COUNT(*) AS count FROM global_users').first();
+      return json({ enabled: true, retentionDays: 7 }, 200, cors);
+    }
 
     if (path === '/api/global/register' && method === 'POST') {
       const value = await globalBody(request);

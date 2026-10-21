@@ -1,5 +1,5 @@
-Warning: truncated output (original token count: 22930)
-Total output lines: 1601
+Warning: truncated output (original token count: 6392)
+Total output lines: 300
 
 import Peer from 'peerjs';
 import './style.css';
@@ -168,34 +168,7 @@ function openPersonalSpace(selectedTab = 'notes') {
   const layer = document.createElement('div');
   layer.className = 'space-layer';
   layer.id = 'personal-space-layer';
-  layer.innerHTML = `<section class="space-card" role="dialog" aria-modal="true" aria-labelledby="space-title"><header class="space-header"><div><span class="space-kicker">A LITTLE SPACE, JUST FOR YOU</span><h2 id="space-title">Your space</h2></div><button class="space-close" type="button" aria-label="Close your space">×</button></header><div class="space-tabs" role="tablist"><button type="button" data-space-tab="notes" role="tab">Personal notes</button><button type="button" data-space-tab="inbox" role="tab">Offline inbox</button></div><div id="space-content" class="space-content"></div></section>`;
-  document.body.append(layer);
-  layer.querySelector('.space-close').addEventListener('click', closePersonalSpace);
-  layer.addEventListener('click', (event) => { if (event.target === layer) closePersonalSpace(); });
-  layer.addEventListener('keydown', (event) => { if (event.key === 'Escape') closePersonalSpace(); });
-  layer.querySelectorAll('[data-space-tab]').forEach((button) => button.addEventListener('click', () => renderPersonalSpace(button.dataset.spaceTab)));
-  renderPersonalSpace(selectedTab);
-}
-
-function closePersonalSpace() {
-  clearInterval(state.spacePollTimer);
-  state.spacePollTimer = null;
-  document.querySelector('#personal-space-layer')?.remove();
-}
-
-function renderPersonalSpace(tab) {
-  clearInterval(state.spacePollTimer);
-  state.spacePollTimer = null;
-  const layer = document.querySelector('#personal-space-layer');
-  const content = document.querySelector('#space-content');
-  if (!layer || !content) return;
-  layer.querySelectorAll('[data-space-tab]').forEach((button) => {
-    const active = button.dataset.spaceTab === tab;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-selected', String(active));
-  });
-  if (tab === 'notes') {
-    content.innerHTML = `<p class="space-description">A private scratchpad for thoughts, plans, and reminders.</p><label class="space-label" for="personal-note">YOUR NOTE</label><textarea id="personal-note" maxlength="20000" placeholder="Write something for yourself…"></textarea><div class="space-note-footer"><span id="note-save-state">Saved only in this browser on this device.</span><span id="note-count">0 / 20,000</span></div>`;
+  layer.innerHTML = `<section class="space-card" role="dialog" aria-modal="true" aria-labelledby="space-title"><header class="space-header"><div><span class="space-kicker">A LITTLE SPACE, JUST FOR YOU</span><h2 id="space-title">Your space</h2></div><button class="space-close" type="button" aria-label="Close your space">×</button></header><div class="space-…392 tokens truncated…class="space-label" for="personal-note">YOUR NOTE</label><textarea id="personal-note" maxlength="20000" placeholder="Write something for yourself…"></textarea><div class="space-note-footer"><span id="note-save-state">Saved only in this browser on this device.</span><span id="note-count">0 / 20,000</span></div>`;
     const note = document.querySelector('#personal-note');
     note.value = localStorage.getItem('near-personal-notes') || '';
     const update = () => {
@@ -587,7 +560,263 @@ function registerVoiceCall(peerId, call, outgoing, { replacement = false } = {})
     record.voice.ice = safeConnectionState(ice);
     if (ice === 'connected' || ice === 'completed') {
       record.voice.state = 'connected';
-      const timer = state.voiceRetryTimers.g…2930 tokens truncated…= 'edit' && typeof text === 'string' && text.trim() && text.length <= 2000) {
+      const timer = state.voiceRetryTimers.get(peerId);
+      if (timer) { clearTimeout(timer); state.voiceRetryTimers.delete(peerId); }
+    } else if (ice === 'disconnected' || ice === 'failed') {
+      record.voice.state = 'recovering';
+      if (isVoiceRecoveryLeader(peerId)) {
+        const wait = ice === 'disconnected' ? 3500 : 0;
+        failVoiceAttempt(peerId, ice === 'failed' ? 'Voice path failed' : 'Voice connection interrupted', wait);
+      }
+    } else if (ice === 'checking') record.voice.state = 'checking';
+    renderNetworkDashboard();
+  };
+  call.on('iceStateChanged', (ice) => {
+    record.voice.ice = safeConnectionState(ice);
+    if (ice === 'connected' || ice === 'completed') {
+      record.voice.state = 'connected';
+      const timer = state.voiceRetryTimers.get(peerId);
+      if (timer) { clearTimeout(timer); state.voiceRetryTimers.delete(peerId); }
+    } else if (ice === 'disconnected' || ice === 'failed') {
+      record.voice.state = 'recovering';
+      if (isVoiceRecoveryLeader(peerId)) failVoiceAttempt(peerId, `Voice ${ice}`, ice === 'disconnected' ? 3500 : 0);
+    }
+    renderNetworkDashboard();
+  });
+  pc?.addEventListener?.('connectionstatechange', onState);
+  pc?.addEventListener?.('iceconnectionstatechange', onState);
+  call.on('stream', (stream) => {
+    const previous = state.calls.get(peerId);
+    state.calls.set(peerId, call);
+    if (state.pendingVoiceCalls.get(peerId) === call) state.pendingVoiceCalls.delete(peerId);
+    state.voiceRecovery.complete(peerId);
+    const timer = state.voiceRetryTimers.get(peerId);
+    if (timer) { clearTimeout(timer); state.voiceRetryTimers.delete(peerId); }
+    record.voice.state = 'connected';
+    record.voice.ice = safeConnectionState(pc?.iceConnectionState || 'connected');
+    record.recovery = '';
+    attachAudio(peerId, stream);
+    if (previous && previous !== call) previous.close();
+    renderNetworkDashboard();
+  });
+  call.on('close', () => {
+    const wasPending = state.pendingVoiceCalls.get(peerId) === call;
+    if (wasPending) state.pendingVoiceCalls.delete(peerId);
+    const wasCurrent = state.calls.get(peerId) === call;
+    if (wasCurrent) state.calls.delete(peerId);
+    if (!state.calls.has(peerId)) removeAudio(peerId);
+    if (wasPending || wasCurrent) {
+      const stillInVoice = state.voiceActive && state.voiceRoster.some((person) => person.id === peerId);
+      if (stillInVoice && isVoiceRecoveryLeader(peerId)) failVoiceAttempt(peerId, 'Voice call closed');
+      else if (!stillInVoice) record.voice.state = 'off';
+    }
+    renderNetworkDashboard();
+  });
+  call.on('error', () => {
+    if (state.pendingVoiceCalls.get(peerId) === call) state.pendingVoiceCalls.delete(peerId);
+    if (state.calls.get(peerId) === call) state.calls.delete(peerId);
+    if (!state.calls.has(peerId)) removeAudio(peerId);
+    if (state.voiceActive && state.voiceRoster.some((person) => person.id === peerId) && isVoiceRecoveryLeader(peerId)) failVoiceAttempt(peerId, 'Voice connection interrupted');
+    renderNetworkDashboard();
+  });
+  onState();
+}
+
+function isVoiceRecoveryLeader(peerId) {
+  return Boolean(state.peer?.id && state.peer.id.localeCompare(peerId) < 0);
+}
+
+function scheduleVoiceRecovery(peerId, reason, delayMs = null) {
+  if (!state.voiceActive || !state.localStream || state.roomEnded || !isVoiceRecoveryLeader(peerId)) return;
+  if (state.voiceRetryTimers.has(peerId) || state.pendingVoiceCalls.has(peerId)) return;
+  const attempt = Math.max(1, state.voiceRecovery.attempts(peerId));
+  const record = ensureNetworkPeer(peerId);
+  if (attempt > 4) {
+    record.voice.state = 'failed';
+    record.recovery = 'Voice could not reconnect after 4 attempts.';
+    renderNetworkDashboard();
+    return;
+  }
+  record.voice.state = 'recovering';
+  record.recovery = `${reason}. Retry ${attempt} of 4.`;
+  const timer = setTimeout(() => {
+    state.voiceRetryTimers.delete(peerId);
+    if (!state.voiceActive || !state.localStream || state.roomEnded || state.pendingVoiceCalls.has(peerId)) return;
+    const call = state.peer?.call(peerId, state.localStream, { metadata: { name: state.name, recovery: true, attempt } });
+    if (!call) return failVoiceAttempt(peerId, 'Could not start a replacement voice call');
+    state.voiceRecovery.begin(peerId);
+    registerVoiceCall(peerId, call, true, { replacement: true });
+    renderNetworkDashboard();
+  }, Math.max(0, delayMs ?? retryDelay(attempt)));
+  state.voiceRetryTimers.set(peerId, timer);
+  renderNetworkDashboard();
+}
+
+function failVoiceAttempt(peerId, reason, delayOverride = null) {
+  if (state.voiceRetryTimers.has(peerId)) return;
+  const retry = state.voiceRecovery.fail(peerId);
+  if (retry.delayMs === null) {
+    const record = ensureNetworkPeer(peerId);
+    record.voice.state = 'failed';
+    record.recovery = `Voice could not reconnect after ${retry.attempt - 1} attempts.`;
+    renderNetworkDashboard();
+    return;
+  }
+  scheduleVoiceRecovery(peerId, reason, delayOverride ?? retry.delayMs);
+}
+
+function attachAudio(peerId, stream) {
+  const container = document.querySelector('#audio-players');
+  if (!container) return;
+  let audio = container.querySelector(`[data-audio-peer="${CSS.escape(peerId)}"]`);
+  if (!audio) {
+    audio = document.createElement('audio');
+    audio.autoplay = true;
+    audio.playsInline = true;
+    audio.dataset.audioPeer = peerId;
+    container.append(audio);
+  }
+  audio.srcObject = stream;
+  audio.play().catch(() => alertToast('Tap the page once to hear the voice chat.'));
+}
+
+function removeAudio(peerId) {
+  const container = document.querySelector('#audio-players');
+  container?.querySelector(`[data-audio-peer="${CSS.escape(peerId)}"]`)?.remove();
+}
+
+function sendToHost(payload) {
+  const host = [...state.connections.values()].find((entry) => entry.connected);
+  if (host) host.conn.send(payload);
+}
+
+async function sendFile(file) {
+  if (!connectedCount()) return alertToast('Connect to someone before sharing a file.');
+  if (file.size > 5 * 1024 * 1024) return alertToast('Files must be 5 MB or smaller.');
+  const safeName = file.name.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 120) || 'shared-file';
+  const buffer = await file.arrayBuffer();
+  const id = makeId();
+  const expiresAt = state.expiryMs ? Date.now() + state.expiryMs : 0;
+  const payload = { type: 'file', id, authorId: state.peer.id, name: state.name, fileName: safeName, mime: file.type.slice(0, 120) || 'application/octet-stream', size: file.size, data: buffer, expiresAt };
+    if (state.isHost) state.connections.forEach((entry) => { if (entry.connected) entry.conn.send(payload); });
+  else sendToHost(payload);
+  const message = makeFileMessage(payload, true);
+  state.messages.push(message);
+  scheduleMessageExpiry(message);
+  renderMessages();
+}
+
+function makeFileMessage(data, mine) {
+  const bytes = data.data instanceof ArrayBuffer ? data.data : data.data?.buffer;
+  const blob = new Blob([bytes], { type: data.mime || 'application/octet-stream' });
+  return { id: data.id, authorId: data.authorId, name: data.name, text: '', fileName: data.fileName, size: data.size, mime: data.mime, fileUrl: URL.createObjectURL(blob), time: Date.now(), mine, reactions: {}, expiresAt: Number(data.expiresAt) || 0 };
+}
+
+function sendReadReceipt(message) {
+  if (!message || message.mine || !state.peer?.id || message.readBy?.[state.peer.id]) return;
+  const payload = { type: 'receipt', messageId: message.id, actorId: state.peer.id, name: state.name };
+  applyReadReceipt(payload.messageId, payload.actorId, payload.name);
+  if (state.isHost) relayToOthers(null, payload);
+  else sendToHost(payload);
+}
+
+function applyReadReceipt(messageId, actorId, name) {
+  const message = state.messages.find((item) => item.id === messageId && item.mine);
+  if (!message || !actorId) return;
+  message.readBy ||= {};
+  message.readBy[actorId] = name || 'Guest';
+  renderMessages();
+}
+
+function scheduleMessageExpiry(message) {
+  if (!message.expiresAt || message.expired) return;
+  clearTimeout(state.expiryTimers.get(message.id));
+  const timer = setTimeout(() => {
+    if (message.mine) {
+      const payload = { type: 'expire', messageId: message.id, actorId: state.peer?.id };
+      if (state.isHost) relayToOthers(null, payload);
+      else sendToHost(payload);
+      applyMessageExpiry(message.id, message.authorId);
+    } else applyMessageExpiry(message.id, message.authorId);
+  }, Math.max(0, message.expiresAt - Date.now()));
+  state.expiryTimers.set(message.id, timer);
+}
+
+function applyMessageExpiry(messageId, actorId) {
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message || message.authorId !== actorId || message.expired) return;
+  message.expired = true;
+  message.text = '';
+  message.reactions = {};
+  if (message.fileUrl) { URL.revokeObjectURL(message.fileUrl); message.fileUrl = ''; }
+  clearTimeout(state.expiryTimers.get(messageId));
+  state.expiryTimers.delete(messageId);
+  renderMessages();
+}
+
+function setSearch(value) {
+  state.search = String(value || '').slice(0, 120).toLocaleLowerCase();
+  renderMessages();
+}
+
+function renderUnread() {
+  const button = document.querySelector('#new-messages');
+  if (!button) return;
+  button.textContent = state.unread ? `↓ ${state.unread} new message${state.unread === 1 ? '' : 's'}` : '↓ New messages';
+  button.classList.toggle('hidden', !state.unread);
+}
+
+function setReplyTo(message) {
+  state.replyTo = message ? { id: message.id, name: message.name, text: message.text.slice(0, 2000) } : null;
+  const preview = document.querySelector('#reply-preview');
+  if (!preview) return;
+  preview.innerHTML = state.replyTo ? `<span><strong>Replying to ${esc(state.replyTo.name)}</strong><small>${renderText(state.replyTo.text)}</small></span><button type="button" data-cancel-reply aria-label="Cancel reply">×</button>` : '';
+  preview.classList.toggle('hidden', !state.replyTo);
+  if (state.replyTo) document.querySelector('#message-input').focus();
+}
+
+function renderText(text) {
+  const safe = esc(text);
+  return safe.replace(/https?:\/\/[^\s<]+/gi, (url) => {
+    const cleanUrl = url.replace(/[),.!?]+$/, '');
+    return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${cleanUrl}</a>${url.slice(cleanUrl.length)}`;
+  }).replace(/\n/g, '<br>');
+}
+
+async function handleMessageAction(action, messageId) {
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message) return;
+  if (action === 'reply') return setReplyTo(message);
+  if (action === 'copy') {
+    try { await navigator.clipboard.writeText(message.text); alertToast('Message copied.'); }
+    catch { window.prompt('Copy this message:', message.text); }
+    return;
+  }
+  if (action === 'edit' && message.mine) {
+    const text = window.prompt('Edit your message:', message.text);
+    if (text === null) return;
+    const clean = text.trim().slice(0, 2000);
+    if (!clean) return alertToast('A message can’t be empty.');
+    sendMessageUpdate('edit', message, clean);
+  }
+  if (action === 'delete' && message.mine && window.confirm('Delete this message for everyone in the room?')) sendMessageUpdate('delete', message);
+}
+
+function sendMessageUpdate(type, message, text) {
+  if (!state.peer?.id) return;
+  applyMessageUpdate(type, message.id, state.peer.id, text);
+  const payload = { type, messageId: message.id, actorId: state.peer.id, ...(text ? { text } : {}) };
+  if (state.isHost) relayToOthers(null, payload);
+  else {
+    const host = [...state.connections.values()].find((entry) => entry.connected);
+    if (host) host.conn.send(payload);
+  }
+}
+
+function applyMessageUpdate(type, messageId, actorId, text) {
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message || message.authorId !== actorId) return;
+  if (type === 'edit' && typeof text === 'string' && text.trim() && text.length <= 2000) {
     message.text = text.trim();
     message.edited = true;
   } else if (type === 'delete') {
