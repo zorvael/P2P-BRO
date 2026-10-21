@@ -29,11 +29,11 @@ function peerOptions() {
 function renderLanding() {
   app.innerHTML = `
     <main class="landing">
-      <nav class="topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><span class="nav-note"><i class="status-dot"></i> Encrypted in transit by WebRTC</span></nav>
+      <nav class="topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><span class="nav-note"><i class="status-dot"></i> WebRTC live rooms · private notes and inbox</span></nav>
       <section class="hero">
         <div class="eyebrow"><span class="sparkle">✳</span> A quieter kind of conversation</div>
         <h1>Some things are<br /><em>better shared</em> directly.</h1>
-        <p class="hero-copy">A little private room for you and your people. No accounts, no archives — just a direct connection between browsers.</p>
+        <p class="hero-copy">A little private room for you and your people. No account needed: talk live, keep personal notes, or leave an encrypted note for later.</p>
         <div class="action-card">
           <div class="card-tabs"><button class="tab active" data-tab="create">Start a room <span>↗</span></button><button class="tab" data-tab="join">Join a room <span>→</span></button></div>
           <form id="room-form" class="room-form">
@@ -41,7 +41,7 @@ function renderLanding() {
             <div id="room-code-wrap" class="hidden"><label for="room-code">ROOM INVITE</label><input id="room-code" maxlength="100" placeholder="Paste an invite link or room ID" /></div>
             <button class="primary-btn" type="submit"><span id="submit-label">Create a private room</span><span>↗</span></button>
           </form>
-          <p class="card-foot"><span class="lock">⌑</span> Your messages stay between you and your guests.</p>
+          <p class="card-foot"><span class="lock">⌑</span> Live room chat stays with its participants. Offline notes are encrypted before queuing.</p>
         </div>
         <div class="personal-actions"><button id="open-notes" type="button"><span>✎</span><strong>Your notes</strong><small>Just for you · saved on this device</small></button><button id="open-inbox" type="button"><span>↙</span><strong>Offline inbox</strong><small>Leave a note for someone who’s away</small></button></div>
         <div class="hero-aside"><span class="aside-line"></span><span>Made for the moments that matter</span><span class="aside-line"></span></div>
@@ -82,7 +82,7 @@ function showWelcome() {
       <span class="welcome-kicker">A PRIVATE SPACE, MADE SIMPLE</span>
       <h2 id="welcome-title">Welcome to <em>Near.</em></h2>
       <p id="welcome-copy">A little corner to catch up with your people—directly, quietly, and without making an account.</p>
-      <div class="welcome-points"><span><i>✳</i> Invite-only rooms</span><span><i>↗</i> Direct browser chat</span><span><i>⌑</i> No message archive</span></div>
+      <div class="welcome-points"><span><i>✳</i> Invite-only rooms</span><span><i>↗</i> Direct browser chat</span><span><i>⌑</i> Local notes · encrypted inbox</span></div>
       <button class="welcome-primary" id="welcome-start" type="button">Get started <span>↗</span></button>
       <button class="welcome-secondary" id="welcome-join" type="button">I have an invite link <span>→</span></button>
       <small class="welcome-foot">Your conversation begins when you’re ready.</small>
