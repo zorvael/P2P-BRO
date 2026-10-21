@@ -12,5 +12,5 @@ ALLOWED_ORIGINS = "https://zorvael.github.io,http://localhost:5173,http://127.0.
 [[d1_databases]]
 binding = "DB"
 database_name = "near-offline-inbox"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "6726fe00-45bc-4df2-8a4f-8d30648e5b4c"
 migrations_dir = "migrations"
