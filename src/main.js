@@ -3,9 +3,10 @@ import './style.css';
 import { canAcceptGuest, createEventLimiter, isValidFileMessage, isValidTextMessage, normalizeExpiry } from './protocol.js';
 import { createRecoveryRegistry, isPeerInRoster, retryDelay, safeConnectionState, summarizePeerStats } from './network.js';
 import { createInboxClient, createMailbox, decryptInboxMessage, encryptInboxMessage, isValidMailbox, makeInboxLink, readInboxLink } from './offline.js';
+import { isValidExperiencePacket, openExperiences } from './experiences.js';
 
 const app = document.querySelector('#app');
-const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null, replyTo: null, editingId: null, unread: 0, search: '', expiryMs: 0, expiryTimers: new Map(), localStream: null, voiceActive: false, voiceRoster: [], calls: new Map(), pendingVoiceCalls: new Map(), voiceRecovery: createRecoveryRegistry(), voiceRetryTimers: new Map(), networkPeers: new Map(), dataRecovery: new Map(), resumeTokens: new Map(), networkTimer: null, networkOpen: false, networkOnline: navigator.onLine, roomEnded: false, leaving: false, spacePollTimer: null, activeMailbox: null, rateLimit: createEventLimiter({ message: { windowMs: 10_000, limit: 20 }, file: { windowMs: 60_000, limit: 3 }, update: { windowMs: 10_000, limit: 40 } }) };
+const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, roomRoster: [], messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null, replyTo: null, editingId: null, unread: 0, search: '', expiryMs: 0, expiryTimers: new Map(), localStream: null, voiceActive: false, voiceRoster: [], calls: new Map(), pendingVoiceCalls: new Map(), voiceRecovery: createRecoveryRegistry(), voiceRetryTimers: new Map(), networkPeers: new Map(), dataRecovery: new Map(), resumeTokens: new Map(), networkTimer: null, networkOpen: false, networkOnline: navigator.onLine, roomEnded: false, leaving: false, spacePollTimer: null, activeMailbox: null, experiences: null, rateLimit: createEventLimiter({ message: { windowMs: 10_000, limit: 20 }, file: { windowMs: 60_000, limit: 3 }, update: { windowMs: 10_000, limit: 40 }, experience: { windowMs: 10_000, limit: 30 } }) };
 const REACTIONS = ['❤️', '😂', '👍', '🎉', '😮'];
 const INBOX_API_URL = import.meta.env.VITE_INBOX_API_URL || '';
 const esc = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -223,7 +224,7 @@ async function copyInboxInvite(mailbox) {
 function renderRoom() {
   app.innerHTML = `
     <main class="chat-shell">
-      <header class="chat-topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><div class="room-label"><span class="room-symbol">✳</span><div><strong>your little corner</strong><small id="room-subtitle">Connecting to your room…</small></div></div><div class="top-actions"><button id="theme-btn" class="outline-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button><button id="voice-btn" class="outline-btn voice-btn" type="button" aria-label="Join voice chat">♫ <span>Voice</span></button><button id="space-btn" class="outline-btn" type="button">Your space</button><button id="invite-btn" class="outline-btn">Invite someone <span>↗</span></button><button id="leave-btn" class="icon-btn" title="Leave room" aria-label="Leave room">×</button></div></header>
+      <header class="chat-topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><div class="room-label"><span class="room-symbol">✳</span><div><strong>your little corner</strong><small id="room-subtitle">Connecting to your room…</small></div></div><div class="top-actions"><button id="theme-btn" class="outline-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button><button id="voice-btn" class="outline-btn voice-btn" type="button" aria-label="Join voice chat">♫ <span>Voice</span></button><button id="experiences-btn" class="outline-btn" type="button">Experiences</button><button id="space-btn" class="outline-btn" type="button">Your space</button><button id="invite-btn" class="outline-btn">Invite someone <span>↗</span></button><button id="leave-btn" class="icon-btn" title="Leave room" aria-label="Leave room">×</button></div></header>
       <div class="chat-layout"><aside class="people-panel"><div class="panel-heading"><span>IN THIS ROOM</span><span id="people-count" class="count-pill">1</span></div><div id="people-list"></div><div id="join-requests" class="join-requests"></div><div class="privacy-note"><span class="privacy-icon">⌑</span><div><strong>Just between you</strong><p>Messages travel directly between browsers. Nothing is stored on a server.</p></div></div></aside>
       <section class="conversation"><div id="connection-banner" class="connection-banner"><i class="status-dot"></i><span id="connection-text">Setting up your private connection</span><button id="retry-btn" class="retry-btn hidden" type="button">Retry</button><button id="network-toggle" class="network-toggle" type="button" aria-expanded="false" aria-controls="network-dashboard">Network</button><button id="search-toggle" class="search-toggle" type="button" aria-label="Search messages" title="Search messages">⌕</button></div><section id="network-dashboard" class="network-dashboard hidden" aria-label="Live connection details"><div class="network-dashboard-heading"><div><strong>Live connection details</strong><small>Peer connection metrics · private addresses and ICE credentials are hidden</small></div><button id="network-close" type="button" aria-label="Close connection details">×</button></div><div id="network-rows" class="network-rows"></div></section><div id="message-search" class="message-search hidden"><input id="search-input" type="search" placeholder="Search this conversation…" aria-label="Search messages" /><button id="search-clear" type="button" aria-label="Clear search">×</button></div><div id="messages" class="messages"><div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>A little space, just for you.</h2><p>Share an invite when you’re ready. The conversation begins when they arrive.</p></div></div><button id="new-messages" class="new-messages hidden" type="button">↓ New messages</button><div id="typing-indicator" class="typing-indicator" aria-live="polite"></div><div id="reply-preview" class="reply-preview hidden"></div><form id="message-form" class="composer"><button type="button" class="composer-symbol" title="This message is sent directly">✳</button><button id="file-btn" type="button" class="file-btn" title="Share a file" aria-label="Share a file" disabled>＋</button><input id="file-input" class="hidden" type="file" /><select id="expiry-select" class="expiry-select" aria-label="Message expiry" title="Disappearing messages"><option value="0">Keep</option><option value="60000">1 min</option><option value="3600000">1 hour</option><option value="86400000">1 day</option></select><input id="message-input" maxlength="2000" placeholder="Write something thoughtful…" autocomplete="off" disabled /><button id="send-btn" class="send-btn" type="submit" disabled aria-label="Send message">↑</button></form><div class="composer-foot"><span>Messages are not saved after you leave.</span><span><kbd>↵</kbd> to send</span></div><div id="audio-players" class="audio-players" aria-label="Voice chat audio"></div></section></div>
       <div id="toast" class="toast" role="status"></div>
@@ -233,6 +234,7 @@ function renderRoom() {
   document.querySelector('#message-form').addEventListener('submit', sendMessage);
   document.querySelector('#voice-btn').addEventListener('click', toggleVoice);
   document.querySelector('#space-btn').addEventListener('click', () => openPersonalSpace('notes'));
+  document.querySelector('#experiences-btn').addEventListener('click', openRoomExperiences);
   document.querySelector('#retry-btn').addEventListener('click', retryJoinRoom);
   document.querySelector('#network-toggle').addEventListener('click', toggleNetworkDashboard);
   document.querySelector('#network-close').addEventListener('click', toggleNetworkDashboard);
@@ -302,6 +304,32 @@ function toggleTheme() {
   const enabled = !document.body.classList.contains('dark');
   document.body.classList.toggle('dark', enabled);
   localStorage.setItem('near-theme', enabled ? 'dark' : 'light');
+}
+
+function createRoomExperiences() {
+  return openExperiences({
+    roomId: state.roomId,
+    name: state.name,
+    isHost: state.isHost,
+    peers: () => state.isHost ? [...state.connections].filter(([, entry]) => entry.connected).map(([id, entry]) => ({ id, name: entry.name })) : state.roomRoster.filter((person) => person.id !== state.peer?.id),
+    send: (packet) => {
+      const payload = { type: 'experience', ...packet };
+      if (state.isHost) relayToOthers(null, payload);
+      else sendToHost(payload);
+    },
+    onBookmark: () => alertToast(state.voiceActive ? 'Call moment bookmarked. No audio or video was recorded.' : 'Room moment bookmarked.')
+  });
+}
+
+function openRoomExperiences() {
+  if (!state.experiences) state.experiences = createRoomExperiences();
+  state.experiences.open();
+}
+
+function broadcastRoomRoster() {
+  if (!state.isHost || !state.peer?.id) return;
+  const roster = [{ id: state.peer.id, name: state.name }, ...[...state.connections].filter(([, entry]) => entry.connected).map(([id, entry]) => ({ id, name: entry.name }))].slice(0, 4);
+  relayToOthers(null, { type: 'room-roster', roster });
 }
 
 function updateVoiceUI() {
@@ -776,6 +804,7 @@ function applyMessageUpdate(type, messageId, actorId, text) {
 
 function createRoom() {
   state.isHost = true;
+  state.roomRoster = [];
   state.roomEnded = false;
   state.leaving = false;
   renderRoom();
@@ -783,6 +812,8 @@ function createRoom() {
   bindPeerEvents();
   state.peer.on('open', (id) => {
     state.roomId = id;
+    window.nearPeerId = id;
+    state.experiences = createRoomExperiences();
     document.querySelector('#room-subtitle').textContent = 'Your private room is ready';
     document.querySelector('#connection-text').textContent = 'Room is open · invite someone to begin';
     document.querySelector('#connection-banner').classList.add('ready');
@@ -795,13 +826,16 @@ function joinRoom(raw) {
   const roomId = extractRoomId(raw);
   if (!roomId || roomId.length > 100) return alertToast('That invite doesn’t look quite right.');
   state.isHost = false;
+  state.roomRoster = [];
   state.roomEnded = false;
   state.leaving = false;
   state.roomId = roomId;
+  state.experiences = createRoomExperiences();
   renderRoom();
   state.peer = new Peer(undefined, peerOptions());
   bindPeerEvents();
-  state.peer.on('open', () => {
+  state.peer.on('open', (id) => {
+    window.nearPeerId = id;
     connectToRoom();
   });
 }
@@ -936,6 +970,8 @@ function addConnection(conn, outgoing = false, options = {}) {
     const wasInVoice = entry.voice;
     entry.voice = false;
     if (stillCurrent) state.connections.delete(conn.peer);
+    if (state.isHost && stillCurrent) state.experiences?.participantLeft?.(conn.peer);
+    if (state.isHost && stillCurrent) broadcastRoomRoster();
     network.chat.state = entry.intentionalRemoteLeave ? 'closed' : 'failed';
     network.recovery = '';
     if (state.isHost && entry.intentionalRemoteLeave) {
@@ -1013,12 +1049,14 @@ function scheduleHostRecoveryExpiry(peerId, entry) {
     if (state.connections.get(peerId) !== entry || !entry.recovering) return;
     entry.voice = false;
     state.connections.delete(peerId);
+    state.experiences?.participantLeft?.(peerId);
     recovery.active = false;
     const network = ensureNetworkPeer(peerId, entry.name);
     network.chat.state = 'failed';
     network.recovery = 'Guest could not reconnect.';
     if (state.calls.has(peerId)) state.calls.get(peerId).close();
     broadcastVoiceRoster();
+    broadcastRoomRoster();
     updatePeople();
     renderNetworkDashboard();
   }, 22_000);
@@ -1078,6 +1116,7 @@ function handleData(peerId, data) {
     renderNetworkDashboard();
     renderMessages();
     sendToHost({ type: 'voice-roster-request' });
+    sendToHost({ type: 'experience', feature: 'system', action: 'sync-request', eventId: makeId() });
     return;
   }
   if (!state.isHost && data.type === 'join-denied') {
@@ -1087,9 +1126,35 @@ function handleData(peerId, data) {
     return;
   }
   if (!entry.connected) return;
-  const limitedType = data.type === 'message' ? 'message' : data.type === 'file' ? 'file' : ['reaction', 'edit', 'delete', 'expire'].includes(data.type) ? 'update' : null;
+  const limitedType = data.type === 'message' ? 'message' : data.type === 'file' ? 'file' : data.type === 'experience' ? 'experience' : ['reaction', 'edit', 'delete', 'expire'].includes(data.type) ? 'update' : null;
   if (limitedType && !state.rateLimit(peerId, limitedType)) { alertToast('Too many actions in a short time. Please slow down.'); return; }
   if (state.isHost && data.type === 'voice-roster-request') { broadcastVoiceRoster(); return; }
+  if (!state.isHost && data.type === 'room-roster') {
+    state.roomRoster = Array.isArray(data.roster) ? data.roster.filter((person) => person && typeof person.id === 'string' && typeof person.name === 'string').slice(0, 4) : [];
+    state.experiences?.render?.();
+    return;
+  }
+  if (data.type === 'experience') {
+    if (!isValidExperiencePacket(data)) return;
+    if (state.isHost && data.feature === 'system' && data.action === 'sync-request') {
+      const snapshot = state.experiences?.snapshot?.();
+      if (snapshot) entry.conn.send({ type: 'experience', feature: 'system', action: 'snapshot', snapshot, eventId: makeId() });
+      return;
+    }
+    if (data.feature === 'system' && data.action === 'snapshot') {
+      if (!state.isHost && data.snapshot && entry.connected) state.experiences?.restore?.(data.snapshot);
+      return;
+    }
+    if (state.isHost) {
+      if (data.feature === 'moment' && data.action === 'add' && data.item) data.item = { ...data.item, authorId: peerId, name: entry.name || 'Guest' };
+      if (data.feature === 'moment' && data.action === 'delete' && data.authorId !== peerId) return;
+      if (data.feature === 'pass' && data.action === 'story' && data.line) data.line = { ...data.line, name: entry.name || 'Guest' };
+      if (data.feature === 'pass' && data.action === 'stroke' && data.stroke) data.stroke = { ...data.stroke, name: entry.name || 'Guest' };
+    }
+    state.experiences?.receive?.(data, peerId);
+    if (state.isHost && !(data.feature === 'mirror' && ['submit', 'reveal', 'category'].includes(data.action))) relayToOthers(peerId, data);
+    return;
+  }
   if (state.isHost && (data.type === 'voice-join' || data.type === 'voice-left')) {
     entry.voice = data.type === 'voice-join';
     broadcastVoiceRoster();
@@ -1240,6 +1305,7 @@ function approveGuest(peerId, { automatic = false } = {}) {
   network.recovery = '';
   renderJoinRequests();
   updatePeople();
+  broadcastRoomRoster();
   document.querySelector('#connection-text').textContent = `${connectedCount()} ${connectedCount() === 1 ? 'person is' : 'people are'} here · connected directly`;
   document.querySelector('#connection-banner').classList.add('ready');
   renderNetworkDashboard();
@@ -1384,6 +1450,8 @@ function alertToast(message) {
 }
 function leaveRoom() {
   state.leaving = true;
+  state.experiences?.close?.();
+  state.experiences = null;
   if (state.isHost) relayToOthers(null, { type: 'room-closing' });
   else sendToHost({ type: 'leave-room' });
   clearInterval(state.networkTimer);
@@ -1402,8 +1470,10 @@ function leaveRoom() {
   state.localTyping = false;
   state.voiceActive = false;
   state.voiceRoster = [];
+  state.roomRoster = [];
   state.localStream = null;
   if (state.peer) state.peer.destroy();
+  window.nearPeerId = null;
   state.connections.clear(); state.pending.clear(); state.calls.clear(); state.pendingVoiceCalls.clear(); state.networkPeers.clear(); state.resumeTokens.clear(); state.messages = []; state.peer = null;
   state.networkTimer = null;
   history.replaceState({}, '', location.pathname);

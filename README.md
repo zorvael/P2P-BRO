@@ -44,6 +44,29 @@ Build a production bundle with `pnpm build`. Preview it locally with `pnpm previ
 - **Personal notes** are saved automatically in this browser's local storage. They do not sync to other devices and can be lost if this browser's site data is cleared.
 - **Offline inbox** uses a one-time invite link. The inbox encryption key is in the URL fragment, which browsers do not send in HTTP requests. The browser encrypts message text and sender name with AES-GCM before upload; the Worker stores ciphertext, a random message ID, mailbox capability ID, and timestamps. The inbox invite is a bearer capability: anyone who has it can read the inbox and leave notes. Do not share it publicly. Notes are capped at 2,000 characters, up to 100 active notes and 20 new notes per inbox per hour, and are deleted after 30 days. The recipient must open Near to fetch notes; there are no push notifications or email alerts. Cloudflare's infrastructure may process request metadata as part of operating the service.
 
+## Experiences
+
+The **Experiences** room entry contains five additions:
+
+- **Time capsule** currently supports a personal text note and an optional small JPG, PNG, or WebP photo (under 180 KB), saved in this browser's local storage with a countdown and opened status. This is a prototype: the browser clock controls it, local storage is inspectable, and UI hiding is not secure access control. Do not put sensitive content in a capsule. It does not create a friend/group capsule or a share link because this static architecture has no trusted timestamp, authorization backend, or secure future unlock service. Voice notes are not currently supported.
+- **Shared moment** lets a participant bookmark a moment or add text to a shared timeline, remove their own contribution, and export JSON. It does not record or transcribe audio/video. Room events are relayed through the host, held only in room memory, bounded and deduplicated, and disappear when everyone leaves. The host sends a bounded snapshot to guests who reconnect.
+- **Pass the moment** includes a one-line-at-a-time shared story and collaborative doodle strokes. Updates go through the existing room host, with per-event size limits and duplicate IDs. A returning participant can receive the host's current snapshot. This is not durable storage or conflict-free collaborative editing; simultaneous actions are ordered by message arrival.
+- **Trust mirror** offers optional prompts and a mutual reveal after the selected room participants submit. Blank answers are treated as skipped. The host temporarily sees each answer because it relays room data, so mutual reveal is a client-level flow, not server-enforced confidentiality. There is no anonymous mode, psychological analysis, or compatibility score. Participants can leave; already submitted answers remain in the host's memory until the room ends.
+- **Internet-free** is an experimental manual WebRTC data channel with no STUN/TURN servers. People must exchange offer/answer text out of band and keep the page open. It offers local text messaging only; automatic nearby discovery, Bluetooth/Wi-Fi Direct, file transfer, and reliable connectivity on every LAN are not implemented. SDP text contains temporary connection details: share it only with the intended participant. The page still has to be loaded first, and messages are not persisted.
+
+These room experiences use a separate `experience` message type and do not change chat/call message formats. Existing guest approval still applies to joining the room. The room host can inspect and relay any room experience payload; WebRTC transport encryption does not make the host unable to read it.
+
+### Try the experiences with people
+
+1. Host opens the site, creates a room, and shares the invite. Each guest joins and waits for host approval. Keep the host tab open.
+2. Open **Experiences → Time capsule**, save a text note or small photo for a future local date, and confirm it remains unavailable in the UI until the countdown reaches the chosen time. Use a near-future time for this prototype; the date is not secure access control.
+3. Open **Shared moment** on two devices, add a bookmark and note, verify they arrive on the other device, remove one contribution from its author device, and export the timeline.
+4. Open **Pass the moment** on two or more devices. Add story lines and doodle strokes from each, then briefly disconnect and reconnect a guest to see whether the host snapshot restores the room state.
+5. In **Trust mirror**, the host chooses the prompt category first. Every participant checks the consent box and submits; answers should stay unrevealed until all currently connected participants submit or leave. Remember that the host can technically inspect answers in memory.
+6. For **Internet-free**, load the page on two nearby devices, keep both tabs open, choose one device to create the offer, exchange the connection text privately, create and return the answer, then apply it on the first device. If it connects, send a local text message. Failure on a particular LAN/browser is expected to be possible.
+
+The repository has automated unit/source checks, but those do not simulate multiple real browsers, mobile microphones, reconnect timing, or local-network ICE negotiation. Verify those steps with real devices before relying on the experiences.
+
 ## Configure signaling and ICE
 
 Copy `.env.example` to `.env` and set a PeerJS-compatible signaling server if you run one:
