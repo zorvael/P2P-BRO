@@ -235,6 +235,15 @@ test('dashboard recovery is per participant and never renders network addresses'
   assert.match(source, /call\.close\(\);\s*state\.pendingVoiceCalls\.delete\(id\)/);
 });
 
+test('room return lasts five minutes for a tab-scoped guest token and host room', () => {
+  assert.match(source, /sessionStorage\.setItem\(GUEST_RETURN_KEY/);
+  assert.match(source, /function suspendHostRoom/);
+  assert.match(source, /function resumeHostRoom/);
+  assert.match(source, /findResumablePeer\(state\.resumeTokens, state\.resumeExpiry/);
+  assert.match(source, /ROOM_RETURN_WINDOW_MS/);
+  assert.match(source, /Keep this browser tab open/);
+});
+
 test('single-person notes and an opt-in offline inbox are available from the landing and chat views', () => {
   assert.match(source, /id="open-notes"/);
   assert.match(source, /id="open-inbox"/);

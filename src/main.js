@@ -4,9 +4,12 @@ import { canAcceptGuest, createEventLimiter, isValidFileMessage, isValidTextMess
 import { createRecoveryRegistry, isPeerInRoster, retryDelay, safeConnectionState, summarizePeerStats } from './network.js';
 import { createInboxClient, createMailbox, decryptInboxMessage, encryptInboxMessage, isValidMailbox, makeInboxLink, readInboxLink } from './offline.js';
 import { isValidExperiencePacket, openExperiences } from './experiences.js';
+import { findResumablePeer, isRoomReturnValid, ROOM_RETURN_WINDOW_MS } from './return.js';
 
 const app = document.querySelector('#app');
-const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, roomRoster: [], messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null, replyTo: null, editingId: null, unread: 0, search: '', expiryMs: 0, expiryTimers: new Map(), localStream: null, voiceActive: false, voiceRoster: [], calls: new Map(), pendingVoiceCalls: new Map(), voiceRecovery: createRecoveryRegistry(), voiceRetryTimers: new Map(), networkPeers: new Map(), dataRecovery: new Map(), resumeTokens: new Map(), networkTimer: null, networkOpen: false, networkOnline: navigator.onLine, roomEnded: false, leaving: false, spacePollTimer: null, activeMailbox: null, experiences: null, rateLimit: createEventLimiter({ message: { windowMs: 10_000, limit: 20 }, file: { windowMs: 60_000, limit: 3 }, update: { windowMs: 10_000, limit: 40 }, experience: { windowMs: 10_000, limit: 30 } }) };
+const RETURN_WINDOW_MS = ROOM_RETURN_WINDOW_MS;
+const GUEST_RETURN_KEY = 'near-room-return-v1';
+const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, roomRoster: [], messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null, guestReturnTimer: null, replyTo: null, editingId: null, unread: 0, search: '', expiryMs: 0, expiryTimers: new Map(), localStream: null, voiceActive: false, voiceRoster: [], calls: new Map(), pendingVoiceCalls: new Map(), voiceRecovery: createRecoveryRegistry(), voiceRetryTimers: new Map(), networkPeers: new Map(), dataRecovery: new Map(), resumeTokens: new Map(), resumeExpiry: new Map(), suspended: false, suspendedUntil: 0, suspendTimer: null, networkTimer: null, networkOpen: false, networkOnline: navigator.onLine, roomEnded: false, leaving: false, spacePollTimer: null, activeMailbox: null, experiences: null, rateLimit: createEventLimiter({ message: { windowMs: 10_000, limit: 20 }, file: { windowMs: 60_000, limit: 3 }, update: { windowMs: 10_000, limit: 40 }, experience: { windowMs: 10_000, limit: 30 } }) };
 const REACTIONS = ['❤️', '😂', '👍', '🎉', '😮'];
 const INBOX_API_URL = import.meta.env.VITE_INBOX_API_URL || '';
 const esc = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -44,6 +47,7 @@ function renderLanding() {
           </form>
           <p class="card-foot"><span class="lock">⌑</span> Live room chat stays with its participants. Offline notes are encrypted before queuing.</p>
         </div>
+      <section id="return-room" class="return-room hidden" aria-live="polite"></section>
         <div class="personal-actions"><button id="open-notes" type="button"><span>✎</span><strong>Your notes</strong><small>Just for you · saved on this device</small></button><button id="open-inbox" type="button"><span>↙</span><strong>Offline inbox</strong><small>Leave a note for someone who’s away</small></button></div>
         <div class="hero-aside"><span class="aside-line"></span><span>Made for the moments that matter</span><span class="aside-line"></span></div>
       </section>
@@ -63,6 +67,7 @@ function renderLanding() {
   });
   document.querySelector('#open-notes').addEventListener('click', () => openPersonalSpace('notes'));
   document.querySelector('#open-inbox').addEventListener('click', () => openPersonalSpace('inbox'));
+  renderRoomReturn();
   const roomFromUrl = new URLSearchParams(location.search).get('room');
   if (roomFromUrl) {
     document.querySelector('[data-tab="join"]').click();
@@ -70,6 +75,49 @@ function renderLanding() {
   }
   if (readInboxLink()) openPersonalSpace('inbox');
   else showWelcome();
+}
+
+function getGuestReturn() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(GUEST_RETURN_KEY) || 'null');
+    if (!isRoomReturnValid(saved)) {
+      sessionStorage.removeItem(GUEST_RETURN_KEY);
+      return null;
+    }
+    return saved;
+  } catch { return null; }
+}
+
+function saveGuestReturn() {
+  if (!state.resumeToken || !state.roomId || state.isHost) return;
+  try { sessionStorage.setItem(GUEST_RETURN_KEY, JSON.stringify({ roomId: state.roomId, token: state.resumeToken, name: state.name, expiresAt: Date.now() + RETURN_WINDOW_MS })); } catch {}
+  clearInterval(state.guestReturnTimer);
+  state.guestReturnTimer = null;
+  if (!state.leaving && connectedCount()) state.guestReturnTimer = setInterval(() => {
+    try { sessionStorage.setItem(GUEST_RETURN_KEY, JSON.stringify({ roomId: state.roomId, token: state.resumeToken, name: state.name, expiresAt: Date.now() + RETURN_WINDOW_MS })); } catch {}
+  }, 30_000);
+}
+
+function clearGuestReturn() {
+  try { sessionStorage.removeItem(GUEST_RETURN_KEY); } catch {}
+}
+
+function renderRoomReturn() {
+  const panel = document.querySelector('#return-room');
+  if (!panel) return;
+  if (state.isHost && state.suspended && state.peer && !state.peer.destroyed) {
+    document.querySelector('.landing')?.classList.add('has-suspended-room');
+    panel.className = 'return-room';
+    panel.innerHTML = `<div><strong>Your room is still open</strong><small>Come back within five minutes. Keep this browser tab open so your guests can stay connected.</small></div><button id="return-to-room" type="button">Return to room <span>↗</span></button>`;
+    panel.querySelector('#return-to-room').addEventListener('click', resumeHostRoom);
+    return;
+  }
+  document.querySelector('.landing')?.classList.remove('has-suspended-room');
+  const saved = getGuestReturn();
+  if (!saved) { panel.className = 'return-room hidden'; panel.replaceChildren(); return; }
+  panel.className = 'return-room';
+  panel.innerHTML = `<div><strong>Pick up where you left off</strong><small>Your return link is saved in this tab for five minutes. The host must still have the room open.</small></div><button id="return-to-room" type="button">Return as ${esc(saved.name || 'Guest')} <span>↗</span></button>`;
+  panel.querySelector('#return-to-room').addEventListener('click', () => { state.name = saved.name || ''; state.resumeToken = saved.token; joinRoom(saved.roomId); });
 }
 
 function showWelcome() {
@@ -224,13 +272,13 @@ async function copyInboxInvite(mailbox) {
 function renderRoom() {
   app.innerHTML = `
     <main class="chat-shell">
-      <header class="chat-topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><div class="room-label"><span class="room-symbol">✳</span><div><strong>your little corner</strong><small id="room-subtitle">Connecting to your room…</small></div></div><div class="top-actions"><button id="theme-btn" class="outline-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button><button id="voice-btn" class="outline-btn voice-btn" type="button" aria-label="Join voice chat">♫ <span>Voice</span></button><button id="experiences-btn" class="outline-btn" type="button">Experiences</button><button id="space-btn" class="outline-btn" type="button">Your space</button><button id="invite-btn" class="outline-btn">Invite someone <span>↗</span></button><button id="leave-btn" class="icon-btn" title="Leave room" aria-label="Leave room">×</button></div></header>
+      <header class="chat-topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><div class="room-label"><span class="room-symbol">✳</span><div><strong>your little corner</strong><small id="room-subtitle">Connecting to your room…</small></div></div><div class="top-actions"><button id="theme-btn" class="outline-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button><button id="voice-btn" class="outline-btn voice-btn" type="button" aria-label="Join voice chat">♫ <span>Voice</span></button><button id="experiences-btn" class="outline-btn" type="button">Experiences</button><button id="space-btn" class="outline-btn" type="button">Your space</button><button id="invite-btn" class="outline-btn">Invite someone <span>↗</span></button><button id="leave-btn" class="icon-btn" title="Step away; return within five minutes" aria-label="Step away; return within five minutes">×</button></div></header>
       <div class="chat-layout"><aside class="people-panel"><div class="panel-heading"><span>IN THIS ROOM</span><span id="people-count" class="count-pill">1</span></div><div id="people-list"></div><div id="join-requests" class="join-requests"></div><div class="privacy-note"><span class="privacy-icon">⌑</span><div><strong>Just between you</strong><p>Messages travel directly between browsers. Nothing is stored on a server.</p></div></div></aside>
       <section class="conversation"><div id="connection-banner" class="connection-banner"><i class="status-dot"></i><span id="connection-text">Setting up your private connection</span><button id="retry-btn" class="retry-btn hidden" type="button">Retry</button><button id="network-toggle" class="network-toggle" type="button" aria-expanded="false" aria-controls="network-dashboard">Network</button><button id="search-toggle" class="search-toggle" type="button" aria-label="Search messages" title="Search messages">⌕</button></div><section id="network-dashboard" class="network-dashboard hidden" aria-label="Live connection details"><div class="network-dashboard-heading"><div><strong>Live connection details</strong><small>Peer connection metrics · private addresses and ICE credentials are hidden</small></div><button id="network-close" type="button" aria-label="Close connection details">×</button></div><div id="network-rows" class="network-rows"></div></section><div id="message-search" class="message-search hidden"><input id="search-input" type="search" placeholder="Search this conversation…" aria-label="Search messages" /><button id="search-clear" type="button" aria-label="Clear search">×</button></div><div id="messages" class="messages"><div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>A little space, just for you.</h2><p>Share an invite when you’re ready. The conversation begins when they arrive.</p></div></div><button id="new-messages" class="new-messages hidden" type="button">↓ New messages</button><div id="typing-indicator" class="typing-indicator" aria-live="polite"></div><div id="reply-preview" class="reply-preview hidden"></div><form id="message-form" class="composer"><button type="button" class="composer-symbol" title="This message is sent directly">✳</button><button id="file-btn" type="button" class="file-btn" title="Share a file" aria-label="Share a file" disabled>＋</button><input id="file-input" class="hidden" type="file" /><select id="expiry-select" class="expiry-select" aria-label="Message expiry" title="Disappearing messages"><option value="0">Keep</option><option value="60000">1 min</option><option value="3600000">1 hour</option><option value="86400000">1 day</option></select><input id="message-input" maxlength="2000" placeholder="Write something thoughtful…" autocomplete="off" disabled /><button id="send-btn" class="send-btn" type="submit" disabled aria-label="Send message">↑</button></form><div class="composer-foot"><span>Messages are not saved after you leave.</span><span><kbd>↵</kbd> to send</span></div><div id="audio-players" class="audio-players" aria-label="Voice chat audio"></div></section></div>
       <div id="toast" class="toast" role="status"></div>
     </main>`;
   document.querySelector('#invite-btn').addEventListener('click', shareInvite);
-  document.querySelector('#leave-btn').addEventListener('click', leaveRoom);
+  document.querySelector('#leave-btn').addEventListener('click', () => state.isHost ? suspendHostRoom() : leaveRoom());
   document.querySelector('#message-form').addEventListener('submit', sendMessage);
   document.querySelector('#voice-btn').addEventListener('click', toggleVoice);
   document.querySelector('#space-btn').addEventListener('click', () => openPersonalSpace('notes'));
@@ -803,6 +851,8 @@ function applyMessageUpdate(type, messageId, actorId, text) {
 }
 
 function createRoom() {
+  state.suspended = false;
+  clearTimeout(state.suspendTimer);
   state.isHost = true;
   state.roomRoster = [];
   state.roomEnded = false;
@@ -829,6 +879,7 @@ function joinRoom(raw) {
   state.roomRoster = [];
   state.roomEnded = false;
   state.leaving = false;
+  state.suspended = false;
   state.roomId = roomId;
   state.experiences = createRoomExperiences();
   renderRoom();
@@ -961,7 +1012,7 @@ function addConnection(conn, outgoing = false, options = {}) {
       network.chat.state = 'recovering';
       network.recovery = 'Restoring chat connection…';
       if (state.isHost) scheduleHostRecoveryExpiry(conn.peer, entry);
-      else scheduleDataRecovery(conn.peer, 'Chat connection closed');
+      else { saveGuestReturn(); scheduleDataRecovery(conn.peer, 'Chat connection closed'); }
       updatePeople();
       renderMessages();
       renderNetworkDashboard();
@@ -975,7 +1026,7 @@ function addConnection(conn, outgoing = false, options = {}) {
     network.chat.state = entry.intentionalRemoteLeave ? 'closed' : 'failed';
     network.recovery = '';
     if (state.isHost && entry.intentionalRemoteLeave) {
-      state.resumeTokens.delete(conn.peer);
+      scheduleHostRecoveryExpiry(conn.peer, entry);
       state.networkPeers.delete(conn.peer);
     }
     if (state.calls.has(conn.peer) && entry.intentionalRemoteLeave) state.calls.get(conn.peer).close();
@@ -1046,7 +1097,11 @@ function scheduleHostRecoveryExpiry(peerId, entry) {
   if (recovery.expiryTimer) clearTimeout(recovery.expiryTimer);
   recovery.expiryTimer = setTimeout(() => {
     recovery.expiryTimer = null;
-    if (state.connections.get(peerId) !== entry || !entry.recovering) return;
+    if (state.resumeTokens.has(peerId)) {
+      state.resumeTokens.delete(peerId);
+      state.resumeExpiry.delete(peerId);
+    }
+    if (state.connections.get(peerId) !== entry || (!entry.recovering && !entry.intentionalRemoteLeave)) return;
     entry.voice = false;
     state.connections.delete(peerId);
     state.experiences?.participantLeft?.(peerId);
@@ -1059,7 +1114,13 @@ function scheduleHostRecoveryExpiry(peerId, entry) {
     broadcastRoomRoster();
     updatePeople();
     renderNetworkDashboard();
-  }, 22_000);
+    const token = state.resumeTokens.get(peerId);
+    if (token) {
+      state.resumeTokens.delete(peerId);
+      state.resumeExpiry.delete(peerId);
+    }
+  }, RETURN_WINDOW_MS);
+  state.resumeExpiry.set(peerId, Infinity);
 }
 
 function handleData(peerId, data) {
@@ -1070,12 +1131,26 @@ function handleData(peerId, data) {
     request.name = typeof data.name === 'string' ? data.name.trim().slice(0, 32) || 'Guest' : 'Guest';
     request.resumeToken = typeof data.resumeToken === 'string' ? data.resumeToken.slice(0, 100) : '';
     request.requested = true;
-    if (request.resumeToken && request.resumeToken === state.resumeTokens.get(peerId)) {
-      approveGuest(peerId, { automatic: true });
-      return;
+    if (request.resumeToken) {
+      const priorId = findResumablePeer(state.resumeTokens, state.resumeExpiry, request.resumeToken);
+      if (priorId) {
+        if (priorId !== peerId) {
+          const priorEntry = state.connections.get(priorId);
+          if (priorEntry && priorEntry !== request) { priorEntry.intentionalRemoteLeave = true; priorEntry.conn.close(); state.connections.delete(priorId); }
+          state.resumeTokens.delete(priorId);
+          state.resumeExpiry.delete(priorId);
+          const priorRecovery = state.dataRecovery.get(priorId);
+          clearTimeout(priorRecovery?.expiryTimer);
+          state.dataRecovery.delete(priorId);
+          request.resumeToken = state.resumeTokens.get(priorId) || data.resumeToken;
+        }
+        approveGuest(peerId, { automatic: true, resumeToken: data.resumeToken });
+        return;
+      }
     }
     renderJoinRequests();
-    document.querySelector('#connection-text').textContent = 'Someone is asking to join your room';
+    const connectionText = document.querySelector('#connection-text');
+    if (connectionText) connectionText.textContent = 'Someone is asking to join your room';
     return;
   }
   const entry = state.connections.get(peerId);
@@ -1087,7 +1162,11 @@ function handleData(peerId, data) {
   }
   if (!state.isHost && data.type === 'room-closing') {
     state.roomEnded = true;
-    document.querySelector('#connection-text').textContent = 'The host closed this room.';
+    clearGuestReturn();
+    clearInterval(state.guestReturnTimer);
+    state.guestReturnTimer = null;
+    const connectionText = document.querySelector('#connection-text');
+    if (connectionText) connectionText.textContent = 'The host closed this room.';
     alertToast('The host closed this room.');
     entry.intentionalRemoteLeave = true;
     entry.conn.close();
@@ -1099,6 +1178,7 @@ function handleData(peerId, data) {
     state.resumeToken = typeof data.resumeToken === 'string' ? data.resumeToken.slice(0, 100) : state.resumeToken;
     entry.connected = true;
     entry.recovering = false;
+    saveGuestReturn();
     const recovery = state.dataRecovery.get(peerId);
     if (recovery) {
       clearTimeout(recovery.timer);
@@ -1281,12 +1361,13 @@ function renderJoinRequests() {
   container.innerHTML = `<div class="request-heading">JOIN REQUESTS <span>${requests.length}</span></div>${requests.map(([peerId, request]) => `<div class="join-request"><div class="request-copy"><strong>${esc(request.name)}</strong><small>wants to join</small></div><div class="request-actions"><button type="button" data-join-action="approve" data-peer="${esc(peerId)}">Allow</button><button type="button" data-join-action="reject" data-peer="${esc(peerId)}" aria-label="Reject ${esc(request.name)}">×</button></div></div>`).join('')}`;
 }
 
-function approveGuest(peerId, { automatic = false } = {}) {
+function approveGuest(peerId, { automatic = false, resumeToken: suppliedToken = '' } = {}) {
   const request = state.pending.get(peerId);
   if (!request || !request.requested || !request.conn.open) return;
   const previous = state.connections.get(peerId);
-  const resumeToken = state.resumeTokens.get(peerId) || makeId();
+  const resumeToken = suppliedToken || state.resumeTokens.get(peerId) || request.resumeToken || makeId();
   state.resumeTokens.set(peerId, resumeToken);
+  state.resumeExpiry.set(peerId, Date.now() + RETURN_WINDOW_MS);
   state.pending.delete(peerId);
   request.connected = true;
   request.recovering = false;
@@ -1306,8 +1387,9 @@ function approveGuest(peerId, { automatic = false } = {}) {
   renderJoinRequests();
   updatePeople();
   broadcastRoomRoster();
-  document.querySelector('#connection-text').textContent = `${connectedCount()} ${connectedCount() === 1 ? 'person is' : 'people are'} here · connected directly`;
-  document.querySelector('#connection-banner').classList.add('ready');
+  const connectionText = document.querySelector('#connection-text');
+  if (connectionText) connectionText.textContent = `${connectedCount()} ${connectedCount() === 1 ? 'person is' : 'people are'} here · connected directly`;
+  document.querySelector('#connection-banner')?.classList.add('ready');
   renderNetworkDashboard();
   if (automatic) alertToast(`${request.name} reconnected.`);
   renderMessages();
@@ -1349,6 +1431,7 @@ function sendMessage(event) {
 }
 
 function updatePeople() {
+  if (!document.querySelector('#people-list')) return;
   const guests = [...state.connections.values()].filter((entry) => entry.connected);
   const me = `<div class="person"><span class="avatar avatar-me">${esc(initials(state.name))}</span><span class="person-name">${esc(state.name)} <small>you</small></span><span class="person-state online"></span></div>`;
   document.querySelector('#people-list').innerHTML = me + guests.map((entry, i) => `<div class="person"><span class="avatar avatar-${i % 4}">${esc(initials(entry.name))}</span><span class="person-name">${esc(entry.name)}</span><span class="person-state online"></span></div>`).join('');
@@ -1448,13 +1531,45 @@ function alertToast(message) {
   toast.textContent = message; toast.classList.add('show');
   clearTimeout(alertToast.timer); alertToast.timer = setTimeout(() => toast.classList.remove('show'), 3400);
 }
+function suspendHostRoom() {
+  if (!state.isHost || !state.peer || state.peer.destroyed || state.suspended) return;
+  state.suspended = true;
+  state.suspendedUntil = Date.now() + RETURN_WINDOW_MS;
+  stopVoice(false);
+  state.experiences?.close?.();
+  clearInterval(state.networkTimer);
+  state.networkTimer = null;
+  state.suspendTimer = setTimeout(() => leaveRoom(), RETURN_WINDOW_MS);
+  history.replaceState({}, '', location.pathname);
+  renderLanding();
+}
+
+function resumeHostRoom() {
+  if (!state.isHost || !state.peer || state.peer.destroyed || !state.suspended || Date.now() >= state.suspendedUntil) return;
+  clearTimeout(state.suspendTimer);
+  state.suspendTimer = null;
+  state.suspended = false;
+  state.suspendedUntil = 0;
+  renderRoom();
+  document.querySelector('#room-subtitle').textContent = 'Your private room is open again';
+  updatePeople();
+  renderMessages();
+  renderNetworkDashboard();
+  document.querySelector('#connection-text').textContent = `${connectedCount()} ${connectedCount() === 1 ? 'person is' : 'people are'} here · room restored`;
+  document.querySelector('#connection-banner').classList.add('ready');
+}
+
 function leaveRoom() {
   state.leaving = true;
+  clearTimeout(state.suspendTimer);
+  state.suspendTimer = null;
   state.experiences?.close?.();
   state.experiences = null;
   if (state.isHost) relayToOthers(null, { type: 'room-closing' });
-  else sendToHost({ type: 'leave-room' });
+  else { saveGuestReturn(); sendToHost({ type: 'leave-room' }); }
   clearInterval(state.networkTimer);
+  clearInterval(state.guestReturnTimer);
+  state.guestReturnTimer = null;
   state.dataRecovery.forEach((recovery) => { clearTimeout(recovery.timer); clearTimeout(recovery.handshakeTimer); clearTimeout(recovery.disconnectTimer); clearTimeout(recovery.expiryTimer); });
   state.voiceRetryTimers.forEach(clearTimeout);
   state.voiceRetryTimers.clear();
@@ -1474,7 +1589,8 @@ function leaveRoom() {
   state.localStream = null;
   if (state.peer) state.peer.destroy();
   window.nearPeerId = null;
-  state.connections.clear(); state.pending.clear(); state.calls.clear(); state.pendingVoiceCalls.clear(); state.networkPeers.clear(); state.resumeTokens.clear(); state.messages = []; state.peer = null;
+  state.connections.clear(); state.pending.clear(); state.calls.clear(); state.pendingVoiceCalls.clear(); state.networkPeers.clear(); state.resumeTokens.clear(); state.resumeExpiry.clear(); state.messages = []; state.peer = null;
+  state.suspended = false; state.suspendedUntil = 0;
   state.networkTimer = null;
   history.replaceState({}, '', location.pathname);
   renderLanding();
