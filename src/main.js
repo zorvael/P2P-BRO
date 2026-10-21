@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 6392)
-Total output lines: 300
-
 import Peer from 'peerjs';
 import './style.css';
 import { canAcceptGuest, createEventLimiter, isValidFileMessage, isValidTextMessage, normalizeExpiry } from './protocol.js';
@@ -168,7 +165,34 @@ function openPersonalSpace(selectedTab = 'notes') {
   const layer = document.createElement('div');
   layer.className = 'space-layer';
   layer.id = 'personal-space-layer';
-  layer.innerHTML = `<section class="space-card" role="dialog" aria-modal="true" aria-labelledby="space-title"><header class="space-header"><div><span class="space-kicker">A LITTLE SPACE, JUST FOR YOU</span><h2 id="space-title">Your space</h2></div><button class="space-close" type="button" aria-label="Close your space">×</button></header><div class="space-…392 tokens truncated…class="space-label" for="personal-note">YOUR NOTE</label><textarea id="personal-note" maxlength="20000" placeholder="Write something for yourself…"></textarea><div class="space-note-footer"><span id="note-save-state">Saved only in this browser on this device.</span><span id="note-count">0 / 20,000</span></div>`;
+  layer.innerHTML = `<section class="space-card" role="dialog" aria-modal="true" aria-labelledby="space-title"><header class="space-header"><div><span class="space-kicker">A LITTLE SPACE, JUST FOR YOU</span><h2 id="space-title">Your space</h2></div><button class="space-close" type="button" aria-label="Close your space">×</button></header><div class="space-tabs" role="tablist"><button type="button" data-space-tab="notes" role="tab">Personal notes</button><button type="button" data-space-tab="inbox" role="tab">Offline inbox</button></div><div id="space-content" class="space-content"></div></section>`;
+  document.body.append(layer);
+  layer.querySelector('.space-close').addEventListener('click', closePersonalSpace);
+  layer.addEventListener('click', (event) => { if (event.target === layer) closePersonalSpace(); });
+  layer.addEventListener('keydown', (event) => { if (event.key === 'Escape') closePersonalSpace(); });
+  layer.querySelectorAll('[data-space-tab]').forEach((button) => button.addEventListener('click', () => renderPersonalSpace(button.dataset.spaceTab)));
+  renderPersonalSpace(selectedTab);
+}
+
+function closePersonalSpace() {
+  clearInterval(state.spacePollTimer);
+  state.spacePollTimer = null;
+  document.querySelector('#personal-space-layer')?.remove();
+}
+
+function renderPersonalSpace(tab) {
+  clearInterval(state.spacePollTimer);
+  state.spacePollTimer = null;
+  const layer = document.querySelector('#personal-space-layer');
+  const content = document.querySelector('#space-content');
+  if (!layer || !content) return;
+  layer.querySelectorAll('[data-space-tab]').forEach((button) => {
+    const active = button.dataset.spaceTab === tab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  if (tab === 'notes') {
+    content.innerHTML = `<p class="space-description">A private scratchpad for thoughts, plans, and reminders.</p><label class="space-label" for="personal-note">YOUR NOTE</label><textarea id="personal-note" maxlength="20000" placeholder="Write something for yourself…"></textarea><div class="space-note-footer"><span id="note-save-state">Saved only in this browser on this device.</span><span id="note-count">0 / 20,000</span></div>`;
     const note = document.querySelector('#personal-note');
     note.value = localStorage.getItem('near-personal-notes') || '';
     const update = () => {
