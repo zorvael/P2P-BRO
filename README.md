@@ -1,6 +1,6 @@
 # Near — private chat, directly
 
-Near is a lightweight browser chat room built on WebRTC. One person hosts a room and shares an invite link; guests request access and connect through the host. Text and files travel over encrypted WebRTC data channels, with the host relaying guest messages so everyone in the room shares one conversation. Voice chat uses WebRTC audio calls between participants. Messages can disappear after a chosen interval, and senders can see delivery receipts. Personal notes stay in the browser on the current device. The optional offline inbox queues end-to-end encrypted notes for up to 30 days using a small Cloudflare Worker and D1 database; it is unavailable until that service is configured.
+Near is a lightweight browser chat room built on WebRTC. One person hosts a room and shares an invite link; guests request access and connect through the host. Text and files travel over encrypted WebRTC data channels, with the host relaying guest messages so everyone in the room shares one conversation. Voice chat uses WebRTC audio calls between participants. Messages can disappear after a chosen interval, and senders can see delivery receipts. Personal notes stay in the browser on the current device. An optional Cloudflare Worker and D1 database can provide an encrypted offline inbox and a separate account-based public Global Chat; neither works until that service is configured and deployed.
 
 ## Requirements
 
@@ -44,6 +44,7 @@ Build a production bundle with `pnpm build`. Preview it locally with `pnpm previ
 - TURN is used only when ICE selects a relay candidate. With no TURN server configured, restrictive NATs or firewalls can prevent reconnection. The dashboard reports a relay only from the selected pair stats; STUN discovery or candidate gathering alone does not prove that the live route is direct.
 - **Personal notes** are saved automatically in this browser's local storage. They do not sync to other devices and can be lost if this browser's site data is cleared.
 - **Offline inbox** uses a one-time invite link. The inbox encryption key is in the URL fragment, which browsers do not send in HTTP requests. The browser encrypts message text and sender name with AES-GCM before upload; the Worker stores ciphertext, a random message ID, mailbox capability ID, and timestamps. The inbox invite is a bearer capability: anyone who has it can read the inbox and leave notes. Do not share it publicly. Notes are capped at 2,000 characters, up to 100 active notes and 20 new notes per inbox per hour, and are deleted after 30 days. The recipient must open Near to fetch notes; there are no push notifications or email alerts. Cloudflare's infrastructure may process request metadata as part of operating the service.
+- **Global Chat** is one shared, hostless public message feed. Participants create a nickname/password account or sign in; it does not use OTP because no phone or email identity provider is configured. Registration checks that the user is 18+; the birth date is not saved. Language, two-letter country code, and optional gender preference are saved with the account but are not displayed in the public feed. Passwords are PBKDF2-SHA-256 hashes with random salts, and sessions are bearer tokens stored hashed in D1. Public message text is readable by other signed-in users and the service operator, is not end-to-end encrypted, and expires after seven days. Users can delete their own messages, report a message, block its author from their own feed, sign out, or delete their account and associated content. Reports are queued for 30 days, but this repository has no staffed moderation service or moderation dashboard; reporting does not promise immediate review. Do not post private or identifying information. The site is not anonymous: Cloudflare and the service operator may receive ordinary connection metadata such as IP addresses. No analytics or advertising scripts are added.
 
 ## Experiences
 
@@ -105,16 +106,22 @@ GitHub Pages is static and cannot store messages by itself. The optional Worker 
    npx wrangler deploy
    ```
 
-4. In GitHub, open **zorvael/P2P-BRO → Settings → Secrets and variables → Actions → Variables**, add `VITE_INBOX_API_URL` with the Worker base URL Wrangler printed (for example `https://near-offline-inbox.<your-subdomain>.workers.dev`). Then open **Actions → Deploy to GitHub Pages → Run workflow** so Pages builds with that URL. The URL is public configuration, not a secret.
+4. In GitHub, open **zorvael/P2P-BRO → Settings → Secrets and variables → Actions → Variables**, add `VITE_INBOX_API_URL` with the Worker base URL Wrangler printed (for example `https://near-offline-inbox.<your-subdomain>.workers.dev`). Then open **Actions → Deploy to GitHub Pages → Run workflow** so Pages builds with that URL. The same URL enables both Offline Inbox and Global Chat. The URL is public configuration, not a secret.
 
    For local development, put `VITE_INBOX_API_URL=https://<your-worker-url>` in the ignored `.env` file. If you use a custom site domain, add its exact origin to `ALLOWED_ORIGINS` in `inbox-worker/wrangler.toml` and redeploy the Worker.
 
-Until the Worker is deployed and the GitHub Actions variable is set, personal notes work but the offline inbox displays a setup message. The Cloudflare account and database are owned and administered by the deployer; this repository cannot create them without that account's authorization.
+Until the Worker is deployed and the GitHub Actions variable is set, personal notes work, while Offline Inbox and Global Chat display setup messages and cannot send messages. The Cloudflare account and database are owned and administered by the deployer; this repository cannot create them without that account's authorization. `wrangler d1 migrations apply near-offline-inbox --remote` applies both the inbox schema and the Global Chat schema. Existing deployments must run the migration and deploy the updated Worker before publishing the Pages build.
+
+### Enable Global Chat
+
+Global Chat shares the existing Worker deployment and D1 database. Apply migration `0002_create_global_chat.sql` with the command above and deploy the updated Worker. Keep the exact GitHub Pages origin in `ALLOWED_ORIGINS`. Build/deploy Pages with `VITE_INBOX_API_URL` set to the Worker URL. The app then displays a Global Chat entry on the landing screen. If the Worker is unavailable, the app shows an explicit setup error rather than simulating a chat.
+
+To verify with two people, open the deployed page in two separate browser profiles/devices, accept the public-feed notice, create different accounts (both users must be 18+), and post from each device. Confirm that posts appear in both feeds, then test report, block, delete-own-message, sign-out, and account deletion. Messages are globally visible while retained; use test content only. Unit checks do not replace a real two-device Worker/D1 test.
 
 ## Security and privacy defaults
 
 - Names are trimmed and limited to 32 characters; messages are trimmed and limited to 2,000 characters. Text is HTML-escaped before display.
-- Live chat has no accounts, cookies, analytics, or server-side chat storage. The optional offline inbox is separate and stores only encrypted envelopes for up to 30 days.
+- Private WebRTC rooms have no Near accounts or server-side room message store. Global Chat is a distinct public service that requires an account and stores plaintext posts for up to seven days. The optional offline inbox is separate and stores only encrypted envelopes for up to 30 days.
 - Invite URLs contain a peer ID, not a password. Anyone with the link can attempt to join while the room is open; share links privately and leave the room when finished.
 - The host browser is trusted with room contents because it relays guest messages. All connected guests should be trusted.
 - Peer IDs are not authentication. Add an authenticated signaling/room service and an explicit guest approval or room secret before using this design for sensitive conversations.
