@@ -2,10 +2,12 @@ import Peer from 'peerjs';
 import './style.css';
 import { canAcceptGuest, createEventLimiter, isValidFileMessage, isValidTextMessage, normalizeExpiry } from './protocol.js';
 import { createRecoveryRegistry, isPeerInRoster, retryDelay, safeConnectionState, summarizePeerStats } from './network.js';
+import { createInboxClient, createMailbox, decryptInboxMessage, encryptInboxMessage, isValidMailbox, makeInboxLink, readInboxLink } from './offline.js';
 
 const app = document.querySelector('#app');
-const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null, replyTo: null, editingId: null, unread: 0, search: '', expiryMs: 0, expiryTimers: new Map(), localStream: null, voiceActive: false, voiceRoster: [], calls: new Map(), pendingVoiceCalls: new Map(), voiceRecovery: createRecoveryRegistry(), voiceRetryTimers: new Map(), networkPeers: new Map(), dataRecovery: new Map(), resumeTokens: new Map(), networkTimer: null, networkOpen: false, networkOnline: navigator.onLine, roomEnded: false, leaving: false, rateLimit: createEventLimiter({ message: { windowMs: 10_000, limit: 20 }, file: { windowMs: 60_000, limit: 3 }, update: { windowMs: 10_000, limit: 40 } }) };
+const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null, replyTo: null, editingId: null, unread: 0, search: '', expiryMs: 0, expiryTimers: new Map(), localStream: null, voiceActive: false, voiceRoster: [], calls: new Map(), pendingVoiceCalls: new Map(), voiceRecovery: createRecoveryRegistry(), voiceRetryTimers: new Map(), networkPeers: new Map(), dataRecovery: new Map(), resumeTokens: new Map(), networkTimer: null, networkOpen: false, networkOnline: navigator.onLine, roomEnded: false, leaving: false, spacePollTimer: null, activeMailbox: null, rateLimit: createEventLimiter({ message: { windowMs: 10_000, limit: 20 }, file: { windowMs: 60_000, limit: 3 }, update: { windowMs: 10_000, limit: 40 } }) };
 const REACTIONS = ['❤️', '😂', '👍', '🎉', '😮'];
+const INBOX_API_URL = import.meta.env.VITE_INBOX_API_URL || '';
 const esc = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const initials = (name) => name.trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'Y';
 
@@ -41,6 +43,7 @@ function renderLanding() {
           </form>
           <p class="card-foot"><span class="lock">⌑</span> Your messages stay between you and your guests.</p>
         </div>
+        <div class="personal-actions"><button id="open-notes" type="button"><span>✎</span><strong>Your notes</strong><small>Just for you · saved on this device</small></button><button id="open-inbox" type="button"><span>↙</span><strong>Offline inbox</strong><small>Leave a note for someone who’s away</small></button></div>
         <div class="hero-aside"><span class="aside-line"></span><span>Made for the moments that matter</span><span class="aside-line"></span></div>
       </section>
       <footer class="landing-footer"><span>© 2026 near</span><span>Small rooms. Real conversations.</span><span>Built for the present moment&nbsp; ✳</span></footer>
@@ -57,12 +60,15 @@ function renderLanding() {
     state.name = document.querySelector('#display-name').value.trim().slice(0, 32);
     if (state.name) mode === 'create' ? createRoom() : joinRoom(document.querySelector('#room-code').value.trim());
   });
+  document.querySelector('#open-notes').addEventListener('click', () => openPersonalSpace('notes'));
+  document.querySelector('#open-inbox').addEventListener('click', () => openPersonalSpace('inbox'));
   const roomFromUrl = new URLSearchParams(location.search).get('room');
   if (roomFromUrl) {
     document.querySelector('[data-tab="join"]').click();
     document.querySelector('#room-code').value = roomFromUrl;
   }
-  showWelcome();
+  if (readInboxLink()) openPersonalSpace('inbox');
+  else showWelcome();
 }
 
 function showWelcome() {
@@ -96,10 +102,128 @@ function showWelcome() {
   layer.querySelector('#welcome-start').focus();
 }
 
+function savedMailbox() {
+  try {
+    const value = JSON.parse(localStorage.getItem('near-offline-inbox') || 'null');
+    return isValidMailbox(value) ? value : null;
+  } catch { return null; }
+}
+
+function openPersonalSpace(selectedTab = 'notes') {
+  closePersonalSpace();
+  const layer = document.createElement('div');
+  layer.className = 'space-layer';
+  layer.id = 'personal-space-layer';
+  layer.innerHTML = `<section class="space-card" role="dialog" aria-modal="true" aria-labelledby="space-title"><header class="space-header"><div><span class="space-kicker">A LITTLE SPACE, JUST FOR YOU</span><h2 id="space-title">Your space</h2></div><button class="space-close" type="button" aria-label="Close your space">×</button></header><div class="space-tabs" role="tablist"><button type="button" data-space-tab="notes" role="tab">Personal notes</button><button type="button" data-space-tab="inbox" role="tab">Offline inbox</button></div><div id="space-content" class="space-content"></div></section>`;
+  document.body.append(layer);
+  layer.querySelector('.space-close').addEventListener('click', closePersonalSpace);
+  layer.addEventListener('click', (event) => { if (event.target === layer) closePersonalSpace(); });
+  layer.addEventListener('keydown', (event) => { if (event.key === 'Escape') closePersonalSpace(); });
+  layer.querySelectorAll('[data-space-tab]').forEach((button) => button.addEventListener('click', () => renderPersonalSpace(button.dataset.spaceTab)));
+  renderPersonalSpace(selectedTab);
+}
+
+function closePersonalSpace() {
+  clearInterval(state.spacePollTimer);
+  state.spacePollTimer = null;
+  document.querySelector('#personal-space-layer')?.remove();
+}
+
+function renderPersonalSpace(tab) {
+  clearInterval(state.spacePollTimer);
+  state.spacePollTimer = null;
+  const layer = document.querySelector('#personal-space-layer');
+  const content = document.querySelector('#space-content');
+  if (!layer || !content) return;
+  layer.querySelectorAll('[data-space-tab]').forEach((button) => {
+    const active = button.dataset.spaceTab === tab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  if (tab === 'notes') {
+    content.innerHTML = `<p class="space-description">A private scratchpad for thoughts, plans, and reminders.</p><label class="space-label" for="personal-note">YOUR NOTE</label><textarea id="personal-note" maxlength="20000" placeholder="Write something for yourself…"></textarea><div class="space-note-footer"><span id="note-save-state">Saved only in this browser on this device.</span><span id="note-count">0 / 20,000</span></div>`;
+    const note = document.querySelector('#personal-note');
+    note.value = localStorage.getItem('near-personal-notes') || '';
+    const update = () => {
+      localStorage.setItem('near-personal-notes', note.value);
+      document.querySelector('#note-count').textContent = `${note.value.length.toLocaleString()} / 20,000`;
+      document.querySelector('#note-save-state').textContent = 'Saved on this device';
+    };
+    note.addEventListener('input', update);
+    update();
+    note.focus();
+    return;
+  }
+  const linkedMailbox = readInboxLink();
+  state.activeMailbox = linkedMailbox || state.activeMailbox || savedMailbox();
+  if (!INBOX_API_URL) {
+    content.innerHTML = `<div class="space-not-ready"><span>↙</span><h3>One small setup step left</h3><p>Your offline inbox needs a tiny message store that stays online while you’re away. Near has no server today, so the inbox can’t receive messages until its optional inbox service is deployed and connected.</p><small>Messages will be encrypted in your browser before the service stores them. The service will not receive your message text or encryption key.</small></div>`;
+    return;
+  }
+  if (!state.activeMailbox) {
+    content.innerHTML = `<div class="space-not-ready"><span>↙</span><h3>Create your private inbox</h3><p>Make a one-time invite link. People with the link can leave encrypted notes for you, even when you’re offline.</p><button id="create-inbox" class="space-primary" type="button">Create inbox invite <span>↗</span></button><small>Keep the link private. It contains the key needed to read messages.</small></div>`;
+    document.querySelector('#create-inbox').addEventListener('click', async () => {
+      state.activeMailbox = createMailbox();
+      localStorage.setItem('near-offline-inbox', JSON.stringify(state.activeMailbox));
+      await copyInboxInvite(state.activeMailbox);
+      renderPersonalSpace('inbox');
+    });
+    return;
+  }
+
+  const mailbox = state.activeMailbox;
+  content.innerHTML = `<div class="inbox-tools"><div><strong>Private inbox</strong><small id="inbox-status">Checking for messages…</small></div><div><button id="copy-inbox-link" type="button">Copy invite</button><button id="refresh-inbox" type="button" aria-label="Refresh inbox">↻</button></div></div><div id="inbox-messages" class="inbox-messages" aria-live="polite"></div><form id="offline-message-form" class="offline-message-form"><label class="space-label" for="offline-sender">YOUR NAME</label><input id="offline-sender" maxlength="32" placeholder="Your name" autocomplete="name" required /><label class="space-label" for="offline-text">LEAVE AN OFFLINE NOTE</label><textarea id="offline-text" maxlength="2000" placeholder="They’ll see it when they open their inbox…" required></textarea><div class="offline-compose-footer"><small>Encrypted on this device before sending.</small><button class="space-primary" type="submit">Leave note <span>↗</span></button></div></form><small class="space-privacy">Inbox links are private capabilities: anyone who has the link can send and read messages in that inbox. Messages expire after 30 days.</small>`;
+  const client = createInboxClient(INBOX_API_URL);
+  let loading = false;
+  const load = async () => {
+    if (loading || !document.querySelector('#inbox-messages')) return;
+    loading = true;
+    document.querySelector('#inbox-status').textContent = 'Checking for messages…';
+    try {
+      const result = await client.list(mailbox);
+      const messages = await Promise.all((Array.isArray(result.messages) ? result.messages : []).map((item) => decryptInboxMessage(mailbox, item)));
+      const received = messages.filter(Boolean);
+      document.querySelector('#inbox-status').textContent = received.length ? `${received.length} encrypted note${received.length === 1 ? '' : 's'} · refreshed just now` : 'No notes yet · this inbox is ready';
+      document.querySelector('#inbox-messages').innerHTML = received.length ? received.map((item) => `<article class="inbox-message"><header><strong>${esc(item.sender)}</strong><time>${item.receivedAt ? new Date(item.receivedAt).toLocaleString() : new Date(item.sentAt).toLocaleString()}</time></header><p>${esc(item.text).replace(/\n/g, '<br>')}</p></article>`).join('') : `<div class="inbox-empty"><span>✳</span><strong>A little space, just for you.</strong><small>New notes will appear here when someone leaves one.</small></div>`;
+    } catch (error) {
+      document.querySelector('#inbox-status').textContent = error.message || 'Could not reach the inbox right now.';
+    } finally { loading = false; }
+  };
+  document.querySelector('#copy-inbox-link').addEventListener('click', () => copyInboxInvite(mailbox));
+  document.querySelector('#refresh-inbox').addEventListener('click', load);
+  document.querySelector('#offline-message-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    const text = document.querySelector('#offline-text').value.trim();
+    if (!text) return;
+    button.disabled = true;
+    try {
+      const envelope = await encryptInboxMessage(mailbox, { sender: document.querySelector('#offline-sender').value, text });
+      await client.send(mailbox, envelope);
+      document.querySelector('#offline-text').value = '';
+      alertToast('Encrypted note delivered to the inbox.');
+      await load();
+    } catch (error) { alertToast(error.message || 'Could not leave that note.'); }
+    finally { button.disabled = false; }
+  });
+  load();
+  state.spacePollTimer = setInterval(load, 15_000);
+}
+
+async function copyInboxInvite(mailbox) {
+  try {
+    const link = makeInboxLink(mailbox, location.href);
+    await navigator.clipboard.writeText(link);
+    alertToast('Private inbox invite copied. Keep it to people you trust.');
+  } catch {
+    alertToast('Could not copy the inbox invite. Check clipboard permissions.');
+  }
+}
+
 function renderRoom() {
   app.innerHTML = `
     <main class="chat-shell">
-      <header class="chat-topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><div class="room-label"><span class="room-symbol">✳</span><div><strong>your little corner</strong><small id="room-subtitle">Connecting to your room…</small></div></div><div class="top-actions"><button id="theme-btn" class="outline-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button><button id="voice-btn" class="outline-btn voice-btn" type="button" aria-label="Join voice chat">♫ <span>Voice</span></button><button id="invite-btn" class="outline-btn">Invite someone <span>↗</span></button><button id="leave-btn" class="icon-btn" title="Leave room" aria-label="Leave room">×</button></div></header>
+      <header class="chat-topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><div class="room-label"><span class="room-symbol">✳</span><div><strong>your little corner</strong><small id="room-subtitle">Connecting to your room…</small></div></div><div class="top-actions"><button id="theme-btn" class="outline-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button><button id="voice-btn" class="outline-btn voice-btn" type="button" aria-label="Join voice chat">♫ <span>Voice</span></button><button id="space-btn" class="outline-btn" type="button">Your space</button><button id="invite-btn" class="outline-btn">Invite someone <span>↗</span></button><button id="leave-btn" class="icon-btn" title="Leave room" aria-label="Leave room">×</button></div></header>
       <div class="chat-layout"><aside class="people-panel"><div class="panel-heading"><span>IN THIS ROOM</span><span id="people-count" class="count-pill">1</span></div><div id="people-list"></div><div id="join-requests" class="join-requests"></div><div class="privacy-note"><span class="privacy-icon">⌑</span><div><strong>Just between you</strong><p>Messages travel directly between browsers. Nothing is stored on a server.</p></div></div></aside>
       <section class="conversation"><div id="connection-banner" class="connection-banner"><i class="status-dot"></i><span id="connection-text">Setting up your private connection</span><button id="retry-btn" class="retry-btn hidden" type="button">Retry</button><button id="network-toggle" class="network-toggle" type="button" aria-expanded="false" aria-controls="network-dashboard">Network</button><button id="search-toggle" class="search-toggle" type="button" aria-label="Search messages" title="Search messages">⌕</button></div><section id="network-dashboard" class="network-dashboard hidden" aria-label="Live connection details"><div class="network-dashboard-heading"><div><strong>Live connection details</strong><small>Peer connection metrics · private addresses and ICE credentials are hidden</small></div><button id="network-close" type="button" aria-label="Close connection details">×</button></div><div id="network-rows" class="network-rows"></div></section><div id="message-search" class="message-search hidden"><input id="search-input" type="search" placeholder="Search this conversation…" aria-label="Search messages" /><button id="search-clear" type="button" aria-label="Clear search">×</button></div><div id="messages" class="messages"><div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>A little space, just for you.</h2><p>Share an invite when you’re ready. The conversation begins when they arrive.</p></div></div><button id="new-messages" class="new-messages hidden" type="button">↓ New messages</button><div id="typing-indicator" class="typing-indicator" aria-live="polite"></div><div id="reply-preview" class="reply-preview hidden"></div><form id="message-form" class="composer"><button type="button" class="composer-symbol" title="This message is sent directly">✳</button><button id="file-btn" type="button" class="file-btn" title="Share a file" aria-label="Share a file" disabled>＋</button><input id="file-input" class="hidden" type="file" /><select id="expiry-select" class="expiry-select" aria-label="Message expiry" title="Disappearing messages"><option value="0">Keep</option><option value="60000">1 min</option><option value="3600000">1 hour</option><option value="86400000">1 day</option></select><input id="message-input" maxlength="2000" placeholder="Write something thoughtful…" autocomplete="off" disabled /><button id="send-btn" class="send-btn" type="submit" disabled aria-label="Send message">↑</button></form><div class="composer-foot"><span>Messages are not saved after you leave.</span><span><kbd>↵</kbd> to send</span></div><div id="audio-players" class="audio-players" aria-label="Voice chat audio"></div></section></div>
       <div id="toast" class="toast" role="status"></div>
@@ -108,6 +232,7 @@ function renderRoom() {
   document.querySelector('#leave-btn').addEventListener('click', leaveRoom);
   document.querySelector('#message-form').addEventListener('submit', sendMessage);
   document.querySelector('#voice-btn').addEventListener('click', toggleVoice);
+  document.querySelector('#space-btn').addEventListener('click', () => openPersonalSpace('notes'));
   document.querySelector('#retry-btn').addEventListener('click', retryJoinRoom);
   document.querySelector('#network-toggle').addEventListener('click', toggleNetworkDashboard);
   document.querySelector('#network-close').addEventListener('click', toggleNetworkDashboard);
@@ -1246,7 +1371,14 @@ async function shareInvite() {
 }
 function alertToast(message) {
   const toast = document.querySelector('#toast');
-  if (!toast) return;
+  if (!toast) {
+    const card = document.querySelector('.space-card');
+    if (!card) return;
+    let feedback = card.querySelector('.space-feedback');
+    if (!feedback) { feedback = document.createElement('p'); feedback.className = 'space-feedback'; card.append(feedback); }
+    feedback.textContent = message;
+    return;
+  }
   toast.textContent = message; toast.classList.add('show');
   clearTimeout(alertToast.timer); alertToast.timer = setTimeout(() => toast.classList.remove('show'), 3400);
 }
