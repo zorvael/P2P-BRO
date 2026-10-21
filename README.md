@@ -1,6 +1,6 @@
 # Near — private chat, directly
 
-Near is a lightweight browser chat room built on WebRTC. One person hosts a room and shares an invite link; guests request access and connect through the host. Text and files travel over encrypted WebRTC data channels, with the host relaying guest messages so everyone in the room shares one conversation. Voice chat uses WebRTC audio calls between participants. Messages can disappear after a chosen interval, and senders can see delivery receipts. No chat history is stored by this app.
+Near is a lightweight browser chat room built on WebRTC. One person hosts a room and shares an invite link; guests request access and connect through the host. Text and files travel over encrypted WebRTC data channels, with the host relaying guest messages so everyone in the room shares one conversation. Voice chat uses WebRTC audio calls between participants. Messages can disappear after a chosen interval, and senders can see delivery receipts. Personal notes stay in the browser on the current device. The optional offline inbox queues end-to-end encrypted notes for up to 30 days using a small Cloudflare Worker and D1 database; it is unavailable until that service is configured.
 
 ## Requirements
 
@@ -41,6 +41,8 @@ Build a production bundle with `pnpm build`. Preview it locally with `pnpm previ
 - Recovery watches ICE failures and prolonged disconnects. It retries with a four-attempt exponential backoff (1, 2, 4, then 8 seconds), deduplicates overlapping connections, and holds a working voice call until a replacement call is ready. Guests use an in-memory resume token so the host can approve a returning connection without another prompt. The token is not persisted and is never displayed.
 - PeerJS 1.5.x owns the offer/answer flow. Its exposed peer connection does not provide this app a supported renegotiation path for an ICE restart; `RTCPeerConnection.restartIce()` must be signaled through a new offer/answer exchange. Recovery therefore creates a fresh PeerJS data or media connection, which performs a new ICE negotiation through the configured PeerJS signaling service. This can briefly interrupt chat and may fail if that signaling service is unavailable.
 - TURN is used only when ICE selects a relay candidate. With no TURN server configured, restrictive NATs or firewalls can prevent reconnection. The dashboard reports a relay only from the selected pair stats; STUN discovery or candidate gathering alone does not prove that the live route is direct.
+- **Personal notes** are saved automatically in this browser's local storage. They do not sync to other devices and can be lost if this browser's site data is cleared.
+- **Offline inbox** uses a one-time invite link. The inbox encryption key is in the URL fragment, which browsers do not send in HTTP requests. The browser encrypts message text and sender name with AES-GCM before upload; the Worker stores ciphertext, a random message ID, mailbox capability ID, and timestamps. The inbox invite is a bearer capability: anyone who has it can read the inbox and leave notes. Do not share it publicly. Notes are capped at 2,000 characters, up to 100 active notes and 20 new notes per inbox per hour, and are deleted after 30 days. The recipient must open Near to fetch notes; there are no push notifications or email alerts. Cloudflare's infrastructure may process request metadata as part of operating the service.
 
 ## Configure signaling and ICE
 
@@ -58,10 +60,37 @@ The signaling server must support PeerJS server endpoints and secure WebSockets 
 
 The public broker is not guaranteed to be available and is not suitable as a production SLA. For a deployable setup, operate a PeerServer-compatible service and TURN server, then build with the appropriate `VITE_` settings.
 
+## Set up the optional offline inbox
+
+GitHub Pages is static and cannot store messages by itself. The optional Worker below is the store-and-forward service. It stores only encrypted envelopes; the AES-GCM key stays in the private invite link fragment and never goes to the Worker. The Worker limits message size and mailbox volume and purges expired rows every day.
+
+1. Create or sign in to a Cloudflare account, install Node.js, then from this repository run:
+
+   ```sh
+   cd inbox-worker
+   npx wrangler login
+   npx wrangler d1 create near-offline-inbox
+   ```
+
+2. Copy the D1 `database_id` printed by Wrangler into `inbox-worker/wrangler.toml`, replacing `REPLACE_WITH_D1_DATABASE_ID`.
+
+3. Apply the schema and deploy the Worker:
+
+   ```sh
+   npx wrangler d1 migrations apply near-offline-inbox --remote
+   npx wrangler deploy
+   ```
+
+4. In GitHub, open **zorvael/P2P-BRO → Settings → Secrets and variables → Actions → Variables**, add `VITE_INBOX_API_URL` with the Worker base URL Wrangler printed (for example `https://near-offline-inbox.<your-subdomain>.workers.dev`). Then open **Actions → Deploy to GitHub Pages → Run workflow** so Pages builds with that URL. The URL is public configuration, not a secret.
+
+   For local development, put `VITE_INBOX_API_URL=https://<your-worker-url>` in the ignored `.env` file. If you use a custom site domain, add its exact origin to `ALLOWED_ORIGINS` in `inbox-worker/wrangler.toml` and redeploy the Worker.
+
+Until the Worker is deployed and the GitHub Actions variable is set, personal notes work but the offline inbox displays a setup message. The Cloudflare account and database are owned and administered by the deployer; this repository cannot create them without that account's authorization.
+
 ## Security and privacy defaults
 
 - Names are trimmed and limited to 32 characters; messages are trimmed and limited to 2,000 characters. Text is HTML-escaped before display.
-- No accounts, cookies, analytics, or server-side chat storage are included.
+- Live chat has no accounts, cookies, analytics, or server-side chat storage. The optional offline inbox is separate and stores only encrypted envelopes for up to 30 days.
 - Invite URLs contain a peer ID, not a password. Anyone with the link can attempt to join while the room is open; share links privately and leave the room when finished.
 - The host browser is trusted with room contents because it relays guest messages. All connected guests should be trusted.
 - Peer IDs are not authentication. Add an authenticated signaling/room service and an explicit guest approval or room secret before using this design for sensitive conversations.
