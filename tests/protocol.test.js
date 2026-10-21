@@ -234,3 +234,14 @@ test('dashboard recovery is per participant and never renders network addresses'
   assert.match(source, /state\.calls\.forEach\(\(call, id\) => \{ if \(!peers\.has\(id\)\)/);
   assert.match(source, /call\.close\(\);\s*state\.pendingVoiceCalls\.delete\(id\)/);
 });
+
+test('single-person notes and an opt-in offline inbox are available from the landing and chat views', () => {
+  assert.match(source, /id="open-notes"/);
+  assert.match(source, /id="open-inbox"/);
+  assert.match(source, /id="space-btn"/);
+  assert.match(source, /near-personal-notes/);
+  assert.match(source, /localStorage\.setItem\('near-personal-notes'/);
+  assert.match(source, /encryptInboxMessage\(mailbox/);
+  assert.match(source, /INBOX_API_URL/);
+  assert.match(networkSource, /selectedCandidatePairId/);
+});
