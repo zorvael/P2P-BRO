@@ -34,6 +34,8 @@ jobs:
         run: pnpm test
       - name: Build app
         run: pnpm build
+        env:
+          VITE_INBOX_API_URL: ${{ vars.VITE_INBOX_API_URL }}
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
