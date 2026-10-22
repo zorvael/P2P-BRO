@@ -1,6 +1,16 @@
 const SESSION_KEY = 'near-global-chat-session-v1';
 const MAX_MESSAGE = 1200;
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+function toIsoBirthDate(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (digits.length !== 8) return '';
+  const day = digits.slice(0, 2);
+  const month = digits.slice(2, 4);
+  const year = digits.slice(4, 8);
+  const iso = `${year}-${month}-${day}`;
+  const parsed = new Date(`${iso}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === iso ? iso : '';
+}
 
 function api(baseUrl, path, { token, method = 'GET', body } = {}) {
   const headers = { 'Content-Type': 'application/json' };
@@ -53,10 +63,15 @@ export function openGlobalChat(baseUrl) {
   };
 
   const renderAuth = () => {
-    content.innerHTML = `<div class="global-tabs"><button type="button" class="active" data-auth-tab="login">Sign in</button><button type="button" data-auth-tab="register">Create account</button></div><p class="global-auth-copy">No phone or email. Keep your password private; there is no account recovery.</p><form id="global-auth-form" class="global-auth-form"><label>Nickname<input name="nickname" minlength="2" maxlength="24" autocomplete="username" required placeholder="2–24 letters or numbers"></label><label>Password<input name="password" type="password" minlength="10" maxlength="128" autocomplete="current-password" required placeholder="At least 10 characters"></label><div id="global-extra-fields" hidden><label>Date of birth<input name="birthDate" type="date" autocomplete="bday" required></label><div class="global-row"><label>Language<select name="language"><option value="en">English</option><option value="hi">हिन्दी</option></select></label><label>Country code<input name="country" minlength="2" maxlength="2" pattern="[A-Za-z]{2}" required placeholder="IN"></label></div><label>Gender<select name="gender"><option value="prefer_not_say">Prefer not to say</option><option value="woman">Woman</option><option value="man">Man</option><option value="nonbinary">Non-binary</option></select></label></div><button class="space-primary" type="submit" id="global-auth-submit">Sign in ↗</button></form><small class="global-privacy">Your profile details are stored by the service. You can use a nickname and leave gender undisclosed.</small>`;
+    content.innerHTML = `<div class="global-tabs"><button type="button" class="active" data-auth-tab="login">Sign in</button><button type="button" data-auth-tab="register">Create account</button></div><p class="global-auth-copy">No phone or email. Keep your password private; there is no account recovery.</p><form id="global-auth-form" class="global-auth-form"><label>Nickname<input name="nickname" minlength="2" maxlength="24" autocomplete="username" required placeholder="2–24 letters or numbers"></label><label>Password<input name="password" type="password" minlength="10" maxlength="128" autocomplete="current-password" required placeholder="At least 10 characters"></label><div id="global-extra-fields" hidden><label>Date of birth<input name="birthDate" type="text" inputmode="numeric" autocomplete="bday" maxlength="10" pattern="[0-9]{2}/[0-9]{2}/[0-9]{4}" placeholder="DD/MM/YYYY" aria-describedby="birth-date-help" required><small id="birth-date-help">Day / month / year, for example 25/08/2006.</small></label><div class="global-row"><label>Language<select name="language"><option value="en">English</option><option value="hi">हिन्दी</option></select></label><label>Country code<input name="country" minlength="2" maxlength="2" pattern="[A-Za-z]{2}" required placeholder="IN"></label></div><label>Gender<select name="gender"><option value="prefer_not_say">Prefer not to say</option><option value="woman">Woman</option><option value="man">Man</option><option value="nonbinary">Non-binary</option></select></label></div><button class="space-primary" type="submit" id="global-auth-submit">Sign in ↗</button></form><small class="global-privacy">Your profile details are stored by the service. You can use a nickname and leave gender undisclosed.</small>`;
     let mode = 'login';
     const extra = content.querySelector('#global-extra-fields');
     const form = content.querySelector('#global-auth-form');
+    const birthDateInput = form.querySelector('[name="birthDate"]');
+    birthDateInput.addEventListener('input', () => {
+      const digits = birthDateInput.value.replace(/\D/g, '').slice(0, 8);
+      birthDateInput.value = digits.replace(/^(\d{2})(\d)/, '$1/$2').replace(/^(\d{2}\/\d{2})(\d)/, '$1/$2');
+    });
     const switchMode = (next) => {
       mode = next;
       content.querySelectorAll('[data-auth-tab]').forEach((item) => { item.classList.toggle('active', item.dataset.authTab === next); });
@@ -75,10 +90,14 @@ export function openGlobalChat(baseUrl) {
       const nickname = String(formData.get('nickname') || '').trim();
       const password = String(formData.get('password') || '');
       const body = { nickname, password };
-      if (mode === 'register') Object.assign(body, {
-        birthDate: formData.get('birthDate'), language: formData.get('language'), country: String(formData.get('country') || '').toUpperCase(),
-        gender: formData.get('gender'), accepted: true,
-      });
+      if (mode === 'register') {
+        const birthDate = toIsoBirthDate(formData.get('birthDate'));
+        if (!birthDate) { showError('Enter a valid date as DD/MM/YYYY.'); busy = false; return; }
+        Object.assign(body, {
+          birthDate, language: formData.get('language'), country: String(formData.get('country') || '').toUpperCase(),
+          gender: formData.get('gender'), accepted: true,
+        });
+      }
       try {
         const result = await api(baseUrl, `/api/global/${mode}`, { method: 'POST', body });
         token = result.token;
