@@ -1,6 +1,7 @@
 name = "near-offline-inbox"
 main = "src/index.js"
 compatibility_date = "2026-10-21"
+account_id = "0a7a2652ffa294452f6d9f14e92d3d3b"
 workers_dev = true
 
 [triggers]
@@ -12,5 +13,5 @@ ALLOWED_ORIGINS = "https://zorvael.github.io,http://localhost:5173,http://127.0.
 [[d1_databases]]
 binding = "DB"
 database_name = "near-offline-inbox"
-database_id = "6726fe00-45bc-4df2-8a4f-8d30648e5b4c"
+database_id = "2595c2ea-d665-4717-aabb-442ce31999c9"
 migrations_dir = "migrations"
