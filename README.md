@@ -1,5 +1,7 @@
 # Near — private chat, directly
 
+**Try the live app:** [Near on GitHub Pages](https://zorvael.github.io/P2P-BRO/)
+
 Near is a lightweight browser chat room built on WebRTC. One person hosts a room and shares an invite link; guests request access and connect through the host. Text and files travel over encrypted WebRTC data channels, with the host relaying guest messages so everyone in the room shares one conversation. Voice chat uses WebRTC audio calls between participants. Messages can disappear after a chosen interval, and senders can see delivery receipts. Personal notes stay in the browser on the current device. An optional Cloudflare Worker and D1 database can provide an encrypted offline inbox and a separate account-based public Global Chat; neither works until that service is configured and deployed.
 
 ## Requirements
