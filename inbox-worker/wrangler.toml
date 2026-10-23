@@ -15,3 +15,13 @@ binding = "DB"
 database_name = "near-offline-inbox"
 database_id = "2595c2ea-d665-4717-aabb-442ce31999c9"
 migrations_dir = "migrations"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+persist = true
+head_sampling_rate = 1
