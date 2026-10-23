@@ -83,6 +83,8 @@ export function openGlobalChat(baseUrl) {
       content.querySelector('#global-auth-submit').textContent = mode === 'register' ? 'Create account ↗' : 'Sign in ↗';
     };
     content.querySelectorAll('[data-auth-tab]').forEach((item) => item.addEventListener('click', () => switchMode(item.dataset.authTab)));
+    // Clear required flags from hidden registration fields before the first login submit.
+    switchMode('login');
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (busy) return;
