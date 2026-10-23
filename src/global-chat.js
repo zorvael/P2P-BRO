@@ -27,7 +27,10 @@ function api(baseUrl, path, { token, method = 'GET', body } = {}) {
         invalid_registration: 'Check your details. You must be 18 or older and use a 10+ character password.',
         invalid_message: 'Messages must contain 1–1,200 characters.',
       };
-      throw new Error(messages[payload.error] || 'Could not complete that action. Please try again.');
+      const message = payload.error === 'rate_limited' && path === '/api/global/login'
+        ? 'Too many sign-in attempts for this nickname. Wait up to 15 minutes, then try again once.'
+        : messages[payload.error];
+      throw new Error(message || 'Could not complete that action. Please try again.');
     }
     return payload;
   });
