@@ -30,16 +30,17 @@ function json(value, status, cors) {
 
 function randomBytes(length) { const bytes = new Uint8Array(length); crypto.getRandomValues(bytes); return bytes; }
 function toHex(bytes) { return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join(''); }
-function toBase64Url(bytes) { return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
+function toBase64Url(bytes) { return btoa(String.fromCharCode(...bytes)).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, ''); }
 async function digest(value) { return toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', typeof value === 'string' ? encoder.encode(value) : value))); }
 async function passwordHash(password, salt) {
   const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
-  return toHex(new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 120_000 }, material, 256)));
+  // Cloudflare Workers' Web Crypto implementation caps PBKDF2 at 100,000 iterations.
+  return toHex(new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 100_000 }, material, 256)));
 }
-function validNickname(value) { return typeof value === 'string' && /^[\p{L}\p{N}\p{M}_ -]{2,24}$/u.test(value.trim()); }
+function validNickname(value) { return typeof value === 'string' && /^[\\p{L}\\p{N}\\p{M}_ -]{2,24}$/u.test(value.trim()); }
 function validPassword(value) { return typeof value === 'string' && value.length >= 10 && value.length <= 128; }
 function ageIsAdult(value, now = Date.now()) {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  if (typeof value !== 'string' || !/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
   const born = new Date(`${value}T00:00:00Z`);
   if (Number.isNaN(born.getTime()) || born.toISOString().slice(0, 10) !== value || born.getTime() > now) return false;
   const today = new Date(now);
@@ -64,7 +65,7 @@ async function authenticatedUser(request, env, now) {
 
 async function handleGlobal(request, env, cors, url) {
   if (!env.DB) return json({ error: 'unavailable' }, 503, cors);
-  const path = url.pathname.replace(/\/$/, '');
+  const path = url.pathname.replace(/\\/$/, '');
   const method = request.method;
   const now = Date.now();
   try {
@@ -141,7 +142,7 @@ async function handleGlobal(request, env, cors, url) {
       const result = await env.DB.prepare('INSERT INTO global_messages (user_id, nickname, body, created_at) VALUES (?, ?, ?, ?)').bind(user.id, user.nickname, value.body.trim(), now).run();
       return json({ id: result.meta?.last_row_id, createdAt: now }, 201, cors);
     }
-    const reportMatch = path.match(/^\/api\/global\/messages\/(\d+)\/report$/);
+    const reportMatch = path.match(/^\\/api\\/global\\/messages\\/(\\d+)\\/report$/);
     if (reportMatch && method === 'POST') {
       const value = await globalBody(request);
       if (!value || !['spam', 'harassment', 'personal_info', 'other'].includes(value.reason)) return json({ error: 'invalid_report' }, 422, cors);
@@ -152,14 +153,14 @@ async function handleGlobal(request, env, cors, url) {
       await env.DB.prepare('INSERT OR IGNORE INTO global_reports (reporter_id, message_id, reason, created_at) VALUES (?, ?, ?, ?)').bind(user.id, Number(reportMatch[1]), value.reason, now).run();
       return json({ ok: true }, 201, cors);
     }
-    const blockMatch = path.match(/^\/api\/global\/messages\/(\d+)\/block$/);
+    const blockMatch = path.match(/^\\/api\\/global\\/messages\\/(\\d+)\\/block$/);
     if (blockMatch && method === 'POST') {
       const message = await env.DB.prepare('SELECT user_id FROM global_messages WHERE id = ?').bind(Number(blockMatch[1])).first();
       if (!message || message.user_id === user.id) return json({ error: 'invalid_user' }, 422, cors);
       await env.DB.prepare('INSERT OR IGNORE INTO global_blocks (user_id, blocked_user_id, created_at) VALUES (?, ?, ?)').bind(user.id, message.user_id, now).run();
       return json({ ok: true }, 201, cors);
     }
-    const deleteMatch = path.match(/^\/api\/global\/messages\/(\d+)$/);
+    const deleteMatch = path.match(/^\\/api\\/global\\/messages\\/(\\d+)$/);
     if (deleteMatch && method === 'DELETE') {
       await env.DB.prepare('DELETE FROM global_messages WHERE id = ? AND user_id = ?').bind(Number(deleteMatch[1]), user.id).run();
       return json({ ok: true }, 200, cors);
@@ -213,7 +214,7 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname.startsWith('/api/global/')) return handleGlobal(request, env, cors, url);
-    const match = url.pathname.match(/^\/api\/inboxes\/([a-f0-9]{64})\/messages$/);
+    const match = url.pathname.match(/^\\/api\\/inboxes\\/([a-f0-9]{64})\\/messages$/);
     if (!match) return json({ error: 'not_found' }, 404, cors);
     if (!env.DB) return json({ error: 'unavailable' }, 503, cors);
     if (!['GET', 'POST'].includes(request.method)) return json({ error: 'method_not_allowed' }, 405, cors);
