@@ -64,6 +64,7 @@ export function openGlobalChat(baseUrl) {
   };
 
   const renderAuth = () => {
+    showError('');
     content.innerHTML = `<div class="global-tabs"><button type="button" class="active" data-auth-tab="login">Sign in</button><button type="button" data-auth-tab="register">Create account</button></div><p class="global-auth-copy">No phone or email. Keep your password private; there is no account recovery.</p><form id="global-auth-form" class="global-auth-form"><label>Nickname<input name="nickname" minlength="2" maxlength="24" autocomplete="username" required placeholder="2–24 letters or numbers"></label><label>Password<input name="password" type="password" minlength="10" maxlength="128" autocomplete="current-password" required placeholder="At least 10 characters"></label><div id="global-extra-fields" hidden><label>Date of birth<input name="birthDate" type="text" inputmode="numeric" autocomplete="bday" maxlength="10" pattern="[0-9]{2}/[0-9]{2}/[0-9]{4}" placeholder="DD/MM/YYYY" aria-describedby="birth-date-help" required><small id="birth-date-help">Day / month / year, for example 25/08/2006.</small></label><div class="global-row"><label>Language<select name="language"><option value="en">English</option><option value="hi">हिन्दी</option></select></label><label>Country code<input name="country" minlength="2" maxlength="2" pattern="[A-Za-z]{2}" required placeholder="IN"></label></div><label>Gender<select name="gender"><option value="prefer_not_say">Prefer not to say</option><option value="woman">Woman</option><option value="man">Man</option><option value="nonbinary">Non-binary</option></select></label></div><button class="space-primary" type="submit" id="global-auth-submit">Sign in ↗</button></form><small class="global-privacy">Your profile details are stored by the service. You can use a nickname and leave gender undisclosed.</small>`;
     let mode = 'login';
     const extra = content.querySelector('#global-extra-fields');
@@ -114,10 +115,15 @@ export function openGlobalChat(baseUrl) {
 
   const renderFeed = () => {
     content.innerHTML = `<div class="global-feed-head"><div><strong>Public group chat</strong><small>Signed in as ${escapeHtml(user.nickname)}</small></div><div><button id="global-delete-account" type="button">Delete account</button> <button id="global-signout" type="button">Sign out</button></div></div><div class="global-feed" id="global-feed" aria-live="polite"></div><form id="global-compose" class="global-compose"><label class="sr-only" for="global-message">Write a public message</label><textarea id="global-message" name="body" maxlength="${MAX_MESSAGE}" rows="2" placeholder="Write a public message…" required></textarea><div><small><span id="global-count">0</span> / ${MAX_MESSAGE} · visible to everyone</small><button class="space-primary" type="submit">Send ↗</button></div></form><small class="global-privacy">Messages are stored for up to 7 days. This feed is separate from private rooms and calls.</small>`;
-    content.querySelector('#global-signout').addEventListener('click', async () => {
+    content.querySelector('#global-signout').addEventListener('click', () => {
+      const signedOutToken = token;
       clearInterval(timer); timer = null;
-      try { await api(baseUrl, '/api/global/session', { token, method: 'DELETE' }); } catch {}
-      sessionStorage.removeItem(SESSION_KEY); token = ''; user = null; messages = []; renderAuth();
+      sessionStorage.removeItem(SESSION_KEY);
+      token = ''; user = null; messages = []; loadingMessages = false; busy = false;
+      showError('');
+      renderAuth();
+      // Clear the UI immediately; server-side revocation can finish in the background.
+      api(baseUrl, '/api/global/session', { token: signedOutToken, method: 'DELETE' }).catch(() => {});
     });
     content.querySelector('#global-delete-account').addEventListener('click', async () => {
       if (!window.confirm('Delete your account and remove your messages, reports, and blocks? This cannot be undone.')) return;
