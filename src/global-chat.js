@@ -46,6 +46,7 @@ export function openGlobalChat(baseUrl) {
   let user = null;
   let timer = null;
   let busy = false;
+  let loadingMessages = false;
   let messages = [];
   const close = () => { clearInterval(timer); layer.remove(); };
   const showError = (message = '') => { errorEl.textContent = message; };
@@ -140,7 +141,8 @@ export function openGlobalChat(baseUrl) {
   };
 
   const loadMessages = async () => {
-    if (!token || busy || !content.querySelector('#global-feed')) return;
+    if (!token || loadingMessages || !content.querySelector('#global-feed')) return;
+    loadingMessages = true;
     try {
       const result = await api(baseUrl, '/api/global/messages', { token });
       messages = Array.isArray(result.messages) ? result.messages : [];
@@ -162,7 +164,22 @@ export function openGlobalChat(baseUrl) {
       }));
       feed.scrollTop = feed.scrollHeight;
       showError('');
-    } catch (error) { showError(error.message); }
+    } catch (error) {
+      if (error.message === 'Your session expired. Sign in again.') {
+        clearInterval(timer);
+        timer = null;
+        sessionStorage.removeItem(SESSION_KEY);
+        token = '';
+        user = null;
+        messages = [];
+        renderAuth();
+        showError(error.message);
+        return;
+      }
+      showError(error.message);
+    } finally {
+      loadingMessages = false;
+    }
   };
 
   const restore = () => {
