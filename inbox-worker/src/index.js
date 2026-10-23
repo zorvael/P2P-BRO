@@ -165,7 +165,9 @@ async function handleGlobal(request, env, cors, url) {
       return json({ ok: true }, 200, cors);
     }
     return json({ error: 'not_found' }, 404, cors);
-  } catch {
+  } catch (error) {
+    // Never log request bodies, passwords, or profile values.
+    console.error('Global Chat request failed', error instanceof Error ? error.name : 'UnknownError', error instanceof Error ? error.message : 'Unknown failure');
     return json({ error: 'unavailable' }, 503, cors);
   }
 }
