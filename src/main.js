@@ -528,8 +528,17 @@ async function toggleVideo() {
   if (state.cameraActive) {
     state.videoStream?.getVideoTracks().forEach((track) => { track.enabled = false; });
     state.cameraActive = false;
-    document.querySelector('#video-preview')?.classList.add('camera-off');
+    document.querySelector('#video-players .local-video')?.classList.add('camera-off');
     updateVoiceUI();
+    refreshVoiceMedia();
+    return;
+  }
+  if (state.videoStream) {
+    state.videoStream.getVideoTracks().forEach((track) => { track.enabled = true; });
+    state.cameraActive = true;
+    document.querySelector('#video-players .local-video')?.classList.remove('camera-off');
+    updateVoiceUI();
+    refreshVoiceMedia();
     return;
   }
   if (!navigator.mediaDevices?.getUserMedia) return alertToast('Video calls need a browser with camera support.');
@@ -543,6 +552,7 @@ async function toggleVideo() {
     });
     attachVideo('you', state.videoStream, true);
     updateVoiceUI();
+    refreshVoiceMedia();
   } catch (error) {
     state.videoStream?.getTracks().forEach((track) => track.stop());
     state.videoStream = null;
@@ -552,6 +562,31 @@ async function toggleVideo() {
 
 function callMediaStream() {
   return new MediaStream([...(state.localStream?.getTracks() || []), ...(state.cameraActive ? state.videoStream?.getVideoTracks() || [] : [])]);
+}
+
+function refreshVoiceMedia() {
+  if (!state.voiceActive || !state.peer) return;
+  if (state.isHost) {
+    relayToOthers(null, { type: 'video-refresh' });
+    restartVoiceCalls();
+  } else sendToHost({ type: 'video-refresh-request' });
+}
+
+function restartVoiceCalls() {
+  if (!state.voiceActive || !state.peer || !state.localStream) return;
+  const peers = state.voiceRoster.filter((person) => person.id !== state.peer.id && state.peer.id.localeCompare(person.id) < 0);
+  peers.forEach(({ id }) => {
+    const previous = state.calls.get(id) || state.pendingVoiceCalls.get(id);
+    if (previous) {
+      state.calls.delete(id);
+      state.pendingVoiceCalls.delete(id);
+      previous.close();
+    }
+    try {
+      const call = state.peer.call(id, callMediaStream(), { metadata: { name: state.name, recovery: true } });
+      if (call) registerVoiceCall(id, call, true);
+    } catch { alertToast('Could not refresh the video connection. Try turning your camera off and on.'); }
+  });
 }
 
 function stopVoice(notifyHost = true) {
@@ -1239,6 +1274,7 @@ function handleData(peerId, data) {
           if (priorEntry && priorEntry !== request) { priorEntry.intentionalRemoteLeave = true; priorEntry.conn.close(); state.connections.delete(priorId); }
           state.resumeTokens.delete(priorId);
           state.resumeExpiry.delete(priorId);
+          state.resumeNames.delete(priorId);
           const priorRecovery = state.dataRecovery.get(priorId);
           clearTimeout(priorRecovery?.expiryTimer);
           state.dataRecovery.delete(priorId);
@@ -1309,6 +1345,8 @@ function handleData(peerId, data) {
   const limitedType = data.type === 'message' ? 'message' : data.type === 'file' ? 'file' : data.type === 'experience' ? 'experience' : ['reaction', 'edit', 'delete', 'expire'].includes(data.type) ? 'update' : null;
   if (limitedType && !state.rateLimit(peerId, limitedType)) { alertToast('Too many actions in a short time. Please slow down.'); return; }
   if (state.isHost && data.type === 'voice-roster-request') { broadcastVoiceRoster(); return; }
+  if (state.isHost && data.type === 'video-refresh-request') { relayToOthers(null, { type: 'video-refresh' }); restartVoiceCalls(); return; }
+  if (!state.isHost && data.type === 'video-refresh') { restartVoiceCalls(); return; }
   if (!state.isHost && data.type === 'room-roster') {
     state.roomRoster = Array.isArray(data.roster) ? data.roster.filter((person) => person && typeof person.id === 'string' && typeof person.name === 'string').slice(0, 4) : [];
     state.experiences?.render?.();
