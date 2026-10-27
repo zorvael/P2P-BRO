@@ -275,15 +275,17 @@ async function copyInboxInvite(mailbox) {
 function renderRoom() {
   app.innerHTML = `
     <main class="chat-shell">
-      <header class="chat-topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><div class="room-label"><span class="room-symbol">✳</span><div><strong>your little corner</strong><small id="room-subtitle">Connecting to your room…</small></div></div><div class="top-actions"><button id="theme-btn" class="outline-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button><button id="voice-btn" class="outline-btn voice-btn" type="button" aria-label="Join voice chat">♫ <span>Voice</span></button><button id="experiences-btn" class="outline-btn" type="button">Experiences</button><button id="space-btn" class="outline-btn" type="button">Your space</button><button id="invite-btn" class="outline-btn">Invite someone <span>↗</span></button><button id="leave-btn" class="icon-btn" title="Step away; return within five minutes" aria-label="Step away; return within five minutes">×</button></div></header>
+      <header class="chat-topbar"><a class="brand" href="/"><span class="brand-mark">n</span> near<span class="brand-dot">.</span></a><div class="room-label"><span class="room-symbol">✳</span><div><strong>your little corner</strong><small id="room-subtitle">Connecting to your room…</small></div></div><div class="top-actions"><button id="theme-btn" class="outline-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button><button id="voice-btn" class="outline-btn voice-btn" type="button" aria-label="Join voice chat">♫ <span>Voice</span></button><button id="mute-btn" class="outline-btn call-control" type="button" aria-label="Mute microphone" title="Mute microphone" disabled>Mic on</button><button id="video-btn" class="outline-btn call-control" type="button" aria-label="Turn camera on" title="Turn camera on" disabled>Camera</button><button id="experiences-btn" class="outline-btn" type="button">Experiences</button><button id="space-btn" class="outline-btn" type="button">Your space</button><button id="invite-btn" class="outline-btn">Invite someone <span>↗</span></button><button id="leave-btn" class="icon-btn" title="Step away; return within five minutes" aria-label="Step away; return within five minutes">×</button></div></header>
       <div class="chat-layout"><aside class="people-panel"><div class="panel-heading"><span>IN THIS ROOM</span><span id="people-count" class="count-pill">1</span></div><div id="people-list"></div><div id="join-requests" class="join-requests"></div><div class="privacy-note"><span class="privacy-icon">⌑</span><div><strong>Just between you</strong><p>Messages travel directly between browsers. Nothing is stored on a server.</p></div></div></aside>
-      <section class="conversation"><div id="connection-banner" class="connection-banner"><i class="status-dot"></i><span id="connection-text">Setting up your private connection</span><button id="retry-btn" class="retry-btn hidden" type="button">Retry</button><button id="network-toggle" class="network-toggle" type="button" aria-expanded="false" aria-controls="network-dashboard">Network</button><button id="search-toggle" class="search-toggle" type="button" aria-label="Search messages" title="Search messages">⌕</button></div><section id="network-dashboard" class="network-dashboard hidden" aria-label="Live connection details"><div class="network-dashboard-heading"><div><strong>Live connection details</strong><small>Peer connection metrics · private addresses and ICE credentials are hidden</small></div><button id="network-close" type="button" aria-label="Close connection details">×</button></div><div id="network-rows" class="network-rows"></div></section><div id="message-search" class="message-search hidden"><input id="search-input" type="search" placeholder="Search this conversation…" aria-label="Search messages" /><button id="search-clear" type="button" aria-label="Clear search">×</button></div><div id="messages" class="messages"><div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>A little space, just for you.</h2><p>Share an invite when you’re ready. The conversation begins when they arrive.</p></div></div><button id="new-messages" class="new-messages hidden" type="button">↓ New messages</button><div id="typing-indicator" class="typing-indicator" aria-live="polite"></div><div id="reply-preview" class="reply-preview hidden"></div><form id="message-form" class="composer"><button type="button" class="composer-symbol" title="This message is sent directly">✳</button><button id="file-btn" type="button" class="file-btn" title="Share a file" aria-label="Share a file" disabled>＋</button><input id="file-input" class="hidden" type="file" /><select id="expiry-select" class="expiry-select" aria-label="Message expiry" title="Disappearing messages"><option value="0">Keep</option><option value="60000">1 min</option><option value="3600000">1 hour</option><option value="86400000">1 day</option></select><input id="message-input" maxlength="2000" placeholder="Write something thoughtful…" autocomplete="off" disabled /><button id="send-btn" class="send-btn" type="submit" disabled aria-label="Send message">↑</button></form><div class="composer-foot"><span>Messages are not saved after you leave.</span><span><kbd>↵</kbd> to send</span></div><div id="audio-players" class="audio-players" aria-label="Voice chat audio"></div></section></div>
+      <section class="conversation"><div id="connection-banner" class="connection-banner"><i class="status-dot"></i><span id="connection-text">Setting up your private connection</span><button id="retry-btn" class="retry-btn hidden" type="button">Retry</button><button id="network-toggle" class="network-toggle" type="button" aria-expanded="false" aria-controls="network-dashboard">Network</button><button id="search-toggle" class="search-toggle" type="button" aria-label="Search messages" title="Search messages">⌕</button></div><section id="network-dashboard" class="network-dashboard hidden" aria-label="Live connection details"><div class="network-dashboard-heading"><div><strong>Live connection details</strong><small>Peer connection metrics · private addresses and ICE credentials are hidden</small></div><button id="network-close" type="button" aria-label="Close connection details">×</button></div><div id="network-rows" class="network-rows"></div></section><div id="message-search" class="message-search hidden"><input id="search-input" type="search" placeholder="Search this conversation…" aria-label="Search messages" /><button id="search-clear" type="button" aria-label="Clear search">×</button></div><div id="messages" class="messages"><div class="empty-state"><div class="empty-art"><span>✳</span><i></i><b>·</b></div><h2>A little space, just for you.</h2><p>Share an invite when you’re ready. The conversation begins when they arrive.</p></div></div><button id="new-messages" class="new-messages hidden" type="button">↓ New messages</button><div id="typing-indicator" class="typing-indicator" aria-live="polite"></div><div id="reply-preview" class="reply-preview hidden"></div><form id="message-form" class="composer"><button type="button" class="composer-symbol" title="This message is sent directly">✳</button><button id="file-btn" type="button" class="file-btn" title="Share a file" aria-label="Share a file" disabled>＋</button><input id="file-input" class="hidden" type="file" /><select id="expiry-select" class="expiry-select" aria-label="Message expiry" title="Disappearing messages"><option value="0">Keep</option><option value="60000">1 min</option><option value="3600000">1 hour</option><option value="86400000">1 day</option></select><input id="message-input" maxlength="2000" placeholder="Write something thoughtful…" autocomplete="off" disabled /><button id="send-btn" class="send-btn" type="submit" disabled aria-label="Send message">↑</button></form><div class="composer-foot"><span>Messages are not saved after you leave.</span><span><kbd>↵</kbd> to send</span></div><div id="video-players" class="video-players" aria-label="Video call participants"></div><div id="audio-players" class="audio-players" aria-label="Voice chat audio"></div></section></div>
       <div id="toast" class="toast" role="status"></div>
     </main>`;
   document.querySelector('#invite-btn').addEventListener('click', shareInvite);
   document.querySelector('#leave-btn').addEventListener('click', () => state.isHost ? suspendHostRoom() : leaveRoom());
   document.querySelector('#message-form').addEventListener('submit', sendMessage);
   document.querySelector('#voice-btn').addEventListener('click', toggleVoice);
+  document.querySelector('#mute-btn').addEventListener('click', toggleMicrophone);
+  document.querySelector('#video-btn').addEventListener('click', toggleVideo);
   document.querySelector('#space-btn').addEventListener('click', () => openPersonalSpace('notes'));
   document.querySelector('#experiences-btn').addEventListener('click', openRoomExperiences);
   document.querySelector('#retry-btn').addEventListener('click', retryJoinRoom);
@@ -391,6 +393,10 @@ function updateVoiceUI() {
   button.setAttribute('aria-label', state.voiceActive ? 'Leave voice chat' : 'Join voice chat');
   button.title = state.voiceActive ? `In voice chat with ${state.voiceRoster.length} participant${state.voiceRoster.length === 1 ? '' : 's'}` : 'Join voice chat';
   button.disabled = !state.isHost && connectedCount() === 0;
+  const mute = document.querySelector('#mute-btn');
+  const camera = document.querySelector('#video-btn');
+  if (mute) { mute.disabled = !state.voiceActive; mute.textContent = state.micMuted ? 'Mic muted' : 'Mic on'; mute.classList.toggle('active', state.micMuted); mute.setAttribute('aria-label', state.micMuted ? 'Unmute microphone' : 'Mute microphone'); }
+  if (camera) { camera.disabled = !state.voiceActive; camera.textContent = state.cameraActive ? 'Camera on' : 'Camera'; camera.classList.toggle('active', state.cameraActive); camera.setAttribute('aria-label', state.cameraActive ? 'Turn camera off' : 'Turn camera on'); }
 }
 
 function ensureNetworkPeer(peerId, name = 'Guest') {
@@ -498,6 +504,7 @@ async function toggleVoice() {
   if (!navigator.mediaDevices?.getUserMedia) return alertToast('Voice chat needs a browser with microphone support.');
   try {
     state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    state.micMuted = false;
     state.voiceActive = true;
     updateVoiceUI();
     if (state.isHost) broadcastVoiceRoster();
@@ -507,6 +514,44 @@ async function toggleVoice() {
     state.localStream = null;
     alertToast(error?.name === 'NotAllowedError' ? 'Allow microphone access in your browser to join voice chat.' : 'Could not start the microphone. Check the device and try again.');
   }
+}
+
+async function toggleMicrophone() {
+  if (!state.voiceActive || !state.localStream) return;
+  state.micMuted = !state.micMuted;
+  state.localStream.getAudioTracks().forEach((track) => { track.enabled = !state.micMuted; });
+  updateVoiceUI();
+}
+
+async function toggleVideo() {
+  if (!state.voiceActive) return alertToast('Join voice chat first, then turn on your camera.');
+  if (state.cameraActive) {
+    state.videoStream?.getVideoTracks().forEach((track) => { track.enabled = false; });
+    state.cameraActive = false;
+    document.querySelector('#video-preview')?.classList.add('camera-off');
+    updateVoiceUI();
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) return alertToast('Video calls need a browser with camera support.');
+  try {
+    state.videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+    const track = state.videoStream.getVideoTracks()[0];
+    if (!track) throw new Error('No camera track');
+    state.cameraActive = true;
+    state.calls.forEach((call) => {
+      if (call.peerConnection && !call.peerConnection.getSenders().some((sender) => sender.track?.kind === 'video')) call.peerConnection.addTrack(track, state.videoStream);
+    });
+    attachVideo('you', state.videoStream, true);
+    updateVoiceUI();
+  } catch (error) {
+    state.videoStream?.getTracks().forEach((track) => track.stop());
+    state.videoStream = null;
+    alertToast(error?.name === 'NotAllowedError' ? 'Allow camera access in your browser to start video.' : 'Could not start the camera. Check camera permissions and try again.');
+  }
+}
+
+function callMediaStream() {
+  return new MediaStream([...(state.localStream?.getTracks() || []), ...(state.cameraActive ? state.videoStream?.getVideoTracks() || [] : [])]);
 }
 
 function stopVoice(notifyHost = true) {
@@ -519,8 +564,13 @@ function stopVoice(notifyHost = true) {
   state.voiceRetryTimers.clear();
   state.networkPeers.forEach((record, peerId) => { record.voice.state = 'off'; record.recovery = ''; state.voiceRecovery.clear(peerId); });
   document.querySelector('#audio-players')?.replaceChildren();
+  document.querySelector('#video-players')?.replaceChildren();
   state.localStream?.getTracks().forEach((track) => track.stop());
+  state.videoStream?.getTracks().forEach((track) => track.stop());
   state.localStream = null;
+  state.videoStream = null;
+  state.cameraActive = false;
+  state.micMuted = false;
   if (state.isHost) broadcastVoiceRoster();
   else if (notifyHost) sendToHost({ type: 'voice-left', name: state.name });
   updateVoiceUI();
@@ -555,7 +605,7 @@ function syncVoiceCalls() {
   peers.forEach((name, id) => {
     if (state.calls.has(id) || state.pendingVoiceCalls.has(id)) return;
     try {
-      const call = state.peer.call(id, state.localStream, { metadata: { name: state.name } });
+      const call = state.peer.call(id, callMediaStream(), { metadata: { name: state.name } });
       if (call) registerVoiceCall(id, call, true);
     } catch { alertToast(`Could not connect voice with ${name}.`); }
   });
@@ -571,7 +621,7 @@ function handleIncomingVoiceCall(call) {
   if (pending && pending !== call) { call.close(); return; }
   if (existing && call.metadata?.recovery !== true) { call.close(); return; }
   registerVoiceCall(call.peer, call, false, { replacement: Boolean(existing) });
-  call.answer(state.localStream);
+  call.answer(callMediaStream());
 }
 
 function registerVoiceCall(peerId, call, outgoing, { replacement = false } = {}) {
@@ -580,6 +630,7 @@ function registerVoiceCall(peerId, call, outgoing, { replacement = false } = {})
   const record = ensureNetworkPeer(peerId);
   record.voice.state = replacement ? 'connecting' : 'checking';
   const pc = call.peerConnection;
+  pc?.addEventListener?.('track', (event) => { if (event.track.kind === 'video') attachVideo(peerId, event.streams[0] || new MediaStream([event.track])); });
   const onState = () => {
     const ice = pc?.iceConnectionState || 'unknown';
     record.voice.ice = safeConnectionState(ice);
@@ -621,6 +672,7 @@ function registerVoiceCall(peerId, call, outgoing, { replacement = false } = {})
     record.voice.ice = safeConnectionState(pc?.iceConnectionState || 'connected');
     record.recovery = '';
     attachAudio(peerId, stream);
+    if (stream.getVideoTracks().length) attachVideo(peerId, stream);
     if (previous && previous !== call) previous.close();
     renderNetworkDashboard();
   });
@@ -705,8 +757,25 @@ function attachAudio(peerId, stream) {
   audio.play().catch(() => alertToast('Tap the page once to hear the voice chat.'));
 }
 
+function attachVideo(peerId, stream, local = false) {
+  const container = document.querySelector('#video-players');
+  if (!container) return;
+  let video = container.querySelector(`[data-video-peer="${CSS.escape(peerId)}"]`);
+  if (!video) {
+    const tile = document.createElement('div');
+    tile.className = `video-tile${local ? ' local-video' : ''}`;
+    video = document.createElement('video');
+    video.autoplay = true; video.playsInline = true; video.muted = local; video.dataset.videoPeer = peerId;
+    const caption = document.createElement('small'); caption.textContent = local ? 'You' : ensureNetworkPeer(peerId).name;
+    tile.append(video, caption); container.append(tile);
+  }
+  video.srcObject = stream;
+  video.play().catch(() => {});
+}
+
 function removeAudio(peerId) {
   const container = document.querySelector('#audio-players');
+  document.querySelector(`#video-players [data-video-peer="${CSS.escape(peerId)}"]`)?.closest('.video-tile')?.remove();
   container?.querySelector(`[data-audio-peer="${CSS.escape(peerId)}"]`)?.remove();
 }
 
