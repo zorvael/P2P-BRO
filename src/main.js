@@ -10,7 +10,7 @@ import { openGlobalChat } from './global-chat.js';
 const app = document.querySelector('#app');
 const RETURN_WINDOW_MS = ROOM_RETURN_WINDOW_MS;
 const GUEST_RETURN_KEY = 'near-room-return-v1';
-const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', isHost: false, roomRoster: [], messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null, guestReturnTimer: null, replyTo: null, editingId: null, unread: 0, search: '', expiryMs: 0, expiryTimers: new Map(), localStream: null, voiceActive: false, voiceRoster: [], calls: new Map(), pendingVoiceCalls: new Map(), voiceRecovery: createRecoveryRegistry(), voiceRetryTimers: new Map(), networkPeers: new Map(), dataRecovery: new Map(), resumeTokens: new Map(), resumeExpiry: new Map(), suspended: false, suspendedUntil: 0, suspendTimer: null, networkTimer: null, networkOpen: false, networkOnline: navigator.onLine, roomEnded: false, leaving: false, spacePollTimer: null, activeMailbox: null, experiences: null, rateLimit: createEventLimiter({ message: { windowMs: 10_000, limit: 20 }, file: { windowMs: 60_000, limit: 3 }, update: { windowMs: 10_000, limit: 40 }, experience: { windowMs: 10_000, limit: 30 } }) };
+const state = { peer: null, connections: new Map(), pending: new Map(), name: '', roomId: '', roomName: '', roomPassword: '', videoStream: null, micMuted: false, cameraActive: false, resumeNames: new Map(), isHost: false, roomRoster: [], messages: [], copied: false, typing: new Map(), localTyping: false, typingTimer: null, guestReturnTimer: null, replyTo: null, editingId: null, unread: 0, search: '', expiryMs: 0, expiryTimers: new Map(), localStream: null, voiceActive: false, voiceRoster: [], calls: new Map(), pendingVoiceCalls: new Map(), voiceRecovery: createRecoveryRegistry(), voiceRetryTimers: new Map(), networkPeers: new Map(), dataRecovery: new Map(), resumeTokens: new Map(), resumeExpiry: new Map(), suspended: false, suspendedUntil: 0, suspendTimer: null, networkTimer: null, networkOpen: false, networkOnline: navigator.onLine, roomEnded: false, leaving: false, spacePollTimer: null, activeMailbox: null, experiences: null, rateLimit: createEventLimiter({ message: { windowMs: 10_000, limit: 20 }, file: { windowMs: 60_000, limit: 3 }, update: { windowMs: 10_000, limit: 40 }, experience: { windowMs: 10_000, limit: 30 } }) };
 const REACTIONS = ['❤️', '😂', '👍', '🎉', '😮'];
 const INBOX_API_URL = import.meta.env.VITE_INBOX_API_URL || '';
 const esc = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -43,7 +43,7 @@ function renderLanding() {
           <div class="card-tabs"><button class="tab active" data-tab="create">Start a room <span>↗</span></button><button class="tab" data-tab="join">Join a room <span>→</span></button></div>
           <form id="room-form" class="room-form">
             <label for="display-name">YOUR NAME</label><input id="display-name" maxlength="32" autocomplete="nickname" placeholder="What should we call you?" required />
-            <div id="room-code-wrap" class="hidden"><label for="room-code">ROOM INVITE</label><input id="room-code" maxlength="100" placeholder="Paste an invite link or room ID" /></div>
+            <label for="room-name">ROOM NAME</label><input id="room-name" maxlength="40" autocomplete="off" placeholder="Choose a name only your group knows" required /><label for="room-password">ROOM PASSWORD</label><input id="room-password" type="password" minlength="8" maxlength="64" autocomplete="new-password" placeholder="At least 8 characters" required /><small class="room-form-hint">Everyone enters the same room name and password. New guests still need the host’s approval.</small>
             <button class="primary-btn" type="submit"><span id="submit-label">Create a private room</span><span>↗</span></button>
           </form>
           <p class="card-foot"><span class="lock">⌑</span> Live room chat stays with its participants. Offline notes are encrypted before queuing.</p>
@@ -58,13 +58,14 @@ function renderLanding() {
   document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => {
     mode = tab.dataset.tab;
     document.querySelectorAll('.tab').forEach((item) => item.classList.toggle('active', item === tab));
-    document.querySelector('#room-code-wrap').classList.toggle('hidden', mode === 'create');
     document.querySelector('#submit-label').textContent = mode === 'create' ? 'Create a private room' : 'Join the conversation';
   }));
   document.querySelector('#room-form').addEventListener('submit', (event) => {
     event.preventDefault();
     state.name = document.querySelector('#display-name').value.trim().slice(0, 32);
-    if (state.name) mode === 'create' ? createRoom() : joinRoom(document.querySelector('#room-code').value.trim());
+    const roomName = document.querySelector('#room-name').value.trim().slice(0, 40);
+    const roomPassword = document.querySelector('#room-password').value;
+    if (state.name && roomName && roomPassword.length >= 8) mode === 'create' ? createRoom(roomName, roomPassword) : joinRoom(roomName, roomPassword);
   });
   document.querySelector('#open-notes').addEventListener('click', () => openPersonalSpace('notes'));
   document.querySelector('#open-inbox').addEventListener('click', () => openPersonalSpace('inbox'));
@@ -73,7 +74,7 @@ function renderLanding() {
   const roomFromUrl = new URLSearchParams(location.search).get('room');
   if (roomFromUrl) {
     document.querySelector('[data-tab="join"]').click();
-    document.querySelector('#room-code').value = roomFromUrl;
+    joinRoomById(roomFromUrl);
   }
   if (readInboxLink()) openPersonalSpace('inbox');
   else showWelcome();
@@ -119,7 +120,7 @@ function renderRoomReturn() {
   if (!saved) { panel.className = 'return-room hidden'; panel.replaceChildren(); return; }
   panel.className = 'return-room';
   panel.innerHTML = `<div><strong>Pick up where you left off</strong><small>Your return link is saved in this tab for five minutes. The host must still have the room open.</small></div><button id="return-to-room" type="button">Return as ${esc(saved.name || 'Guest')} <span>↗</span></button>`;
-  panel.querySelector('#return-to-room').addEventListener('click', () => { state.name = saved.name || ''; state.resumeToken = saved.token; joinRoom(saved.roomId); });
+  panel.querySelector('#return-to-room').addEventListener('click', () => { state.name = saved.name || ''; state.resumeToken = saved.token; joinRoomById(saved.roomId); });
 }
 
 function showWelcome() {
@@ -852,31 +853,58 @@ function applyMessageUpdate(type, messageId, actorId, text) {
   renderMessages();
 }
 
-function createRoom() {
+async function deriveRoomPeerId(roomName, password) {
+  const normalizedName = roomName.trim().normalize('NFKC').toLocaleLowerCase();
+  const input = new TextEncoder().encode('near-room-v1|' + normalizedName + '|' + password);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', input));
+  const hex = [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return 'near-' + hex.slice(0, 40);
+}
+
+async function createRoom(roomName, password) {
+  if (roomName.length > 40 || password.length < 8 || password.length > 64) return alertToast('Use a room name up to 40 characters and a password of 8–64 characters.');
+  state.roomName = roomName;
+  state.roomPassword = password;
   state.suspended = false;
   clearTimeout(state.suspendTimer);
   state.isHost = true;
   state.roomRoster = [];
   state.roomEnded = false;
   state.leaving = false;
+  try { state.roomId = await deriveRoomPeerId(roomName, password); }
+  catch { return alertToast('Secure room setup is unavailable in this browser. Try a recent browser over HTTPS.'); }
   renderRoom();
-  state.peer = new Peer(undefined, peerOptions());
+  state.peer = new Peer(state.roomId, peerOptions());
   bindPeerEvents();
   state.peer.on('open', (id) => {
     state.roomId = id;
     window.nearPeerId = id;
     state.experiences = createRoomExperiences();
-    document.querySelector('#room-subtitle').textContent = 'Your private room is ready';
-    document.querySelector('#connection-text').textContent = 'Room is open · invite someone to begin';
+    document.querySelector('#room-subtitle').textContent = '“' + state.roomName + '” · private room';
+    document.querySelector('#connection-text').textContent = 'Room is open · share the room name and password';
     document.querySelector('#connection-banner').classList.add('ready');
     renderMessages();
   });
   state.peer.on('connection', (conn) => addConnection(conn));
 }
 
-function joinRoom(raw) {
+async function joinRoom(roomName, password) {
+  if (roomName.length > 40 || password.length < 8 || password.length > 64) return alertToast('Enter the same room name and password (8–64 characters) as the host.');
+  state.roomName = roomName;
+  state.roomPassword = password;
+  let roomId;
+  try { roomId = await deriveRoomPeerId(roomName, password); }
+  catch { return alertToast('Secure room setup is unavailable in this browser. Try a recent browser over HTTPS.'); }
+  startJoinRoom(roomId);
+}
+
+function joinRoomById(raw) {
   const roomId = extractRoomId(raw);
   if (!roomId || roomId.length > 100) return alertToast('That invite doesn’t look quite right.');
+  startJoinRoom(roomId);
+}
+
+function startJoinRoom(roomId) {
   state.isHost = false;
   state.roomRoster = [];
   state.roomEnded = false;
@@ -892,7 +920,6 @@ function joinRoom(raw) {
     connectToRoom();
   });
 }
-
 function connectToRoom(automatic = false) {
   if (!state.peer || state.peer.destroyed || !state.roomId) return;
   const conn = state.peer.connect(state.roomId, { reliable: true, metadata: { name: state.name } });
@@ -920,7 +947,7 @@ function retryJoinRoom() {
 function bindPeerEvents() {
   state.peer.on('call', handleIncomingVoiceCall);
   state.peer.on('error', (err) => {
-    const messages = { 'peer-unavailable': 'Couldn’t find this room. It may be closed or the invite may be old; ask the host for a fresh link.', 'network': 'The signaling service is unreachable. Check your connection and try again.', 'server-error': 'The signaling service had a moment. Please try again shortly.', 'browser-incompatible': 'This browser does not support WebRTC. Try a recent version of Chrome, Firefox, Safari, or Edge.' };
+    const messages = { 'peer-unavailable': 'Couldn’t find that room. Check the room name and password with the host.', 'unavailable-id': 'That room name and password are already in use. Ask the host to choose a different room name or password.', 'network': 'The signaling service is unreachable. Check your connection and try again.', 'server-error': 'The signaling service had a moment. Please try again shortly.', 'browser-incompatible': 'This browser does not support WebRTC. Try a recent version of Chrome, Firefox, Safari, or Edge.' };
     alertToast(messages[err.type] || 'Something interrupted the connection. Please try again.');
     document.querySelector('#connection-text').textContent = messages[err.type] || 'Connection interrupted';
     document.querySelector('#retry-btn')?.classList.toggle('hidden', state.isHost || !['peer-unavailable', 'network', 'server-error'].includes(err.type));
@@ -1102,6 +1129,7 @@ function scheduleHostRecoveryExpiry(peerId, entry) {
     if (state.resumeTokens.has(peerId)) {
       state.resumeTokens.delete(peerId);
       state.resumeExpiry.delete(peerId);
+      state.resumeNames.delete(peerId);
     }
     if (state.connections.get(peerId) !== entry || (!entry.recovering && !entry.intentionalRemoteLeave)) return;
     entry.voice = false;
@@ -1135,7 +1163,8 @@ function handleData(peerId, data) {
     request.requested = true;
     if (request.resumeToken) {
       const priorId = findResumablePeer(state.resumeTokens, state.resumeExpiry, request.resumeToken);
-      if (priorId) {
+      if (priorId && state.resumeNames.get(priorId) === request.name) {
+        const tokenToResume = state.resumeTokens.get(priorId);
         if (priorId !== peerId) {
           const priorEntry = state.connections.get(priorId);
           if (priorEntry && priorEntry !== request) { priorEntry.intentionalRemoteLeave = true; priorEntry.conn.close(); state.connections.delete(priorId); }
@@ -1144,9 +1173,9 @@ function handleData(peerId, data) {
           const priorRecovery = state.dataRecovery.get(priorId);
           clearTimeout(priorRecovery?.expiryTimer);
           state.dataRecovery.delete(priorId);
-          request.resumeToken = state.resumeTokens.get(priorId) || data.resumeToken;
+          request.resumeToken = tokenToResume || data.resumeToken;
         }
-        approveGuest(peerId, { automatic: true, resumeToken: data.resumeToken });
+        approveGuest(peerId, { automatic: true, resumeToken: tokenToResume || data.resumeToken });
         return;
       }
     }
@@ -1370,6 +1399,7 @@ function approveGuest(peerId, { automatic = false, resumeToken: suppliedToken = 
   const resumeToken = suppliedToken || state.resumeTokens.get(peerId) || request.resumeToken || makeId();
   state.resumeTokens.set(peerId, resumeToken);
   state.resumeExpiry.set(peerId, Date.now() + RETURN_WINDOW_MS);
+  state.resumeNames.set(peerId, request.name);
   state.pending.delete(peerId);
   request.connected = true;
   request.recovering = false;
