@@ -14,10 +14,13 @@ test('chat client bounds and escapes untrusted message content', () => {
   assert.match(source, /maxlength="2000"/);
 });
 
-test('invite links carry a room ID and guests request room access', () => {
-  assert.match(source, /new URLSearchParams\(\{ room: state\.roomId \}\)/);
+test('named password rooms derive a shared peer destination and guests request host approval', () => {
+  assert.match(source, /async function deriveRoomPeerId/);
+  assert.match(source, /new Peer\(state\.roomId, peerOptions\(\)\)/);
+  assert.match(source, /roomPassword/);
   assert.match(source, /type: 'join-request', name: state\.name/);
-  assert.match(source, /function extractRoomId/);
+  assert.match(source, /function shareInvite/);
+  assert.match(source, /Room password:/);
 });
 
 test('guest messages are relayed by the host and client cleanup closes peers', () => {
