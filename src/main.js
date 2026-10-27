@@ -1613,11 +1613,10 @@ function extractRoomId(raw) {
   return raw.replace(/^room:/, '').trim();
 }
 async function shareInvite() {
-  if (!state.roomId) return alertToast('Your room is still getting ready.');
-  const url = new URL(location.href);
-  url.search = new URLSearchParams({ room: state.roomId }).toString();
-  try { await navigator.clipboard.writeText(url.toString()); alertToast('Invite link copied — send it to your person.'); }
-  catch { window.prompt('Copy this invite link:', url.toString()); }
+  if (!state.roomId || !state.roomName || !state.roomPassword) return alertToast('Your room is still getting ready.');
+  const details = 'Near room: ' + state.roomName + '\nRoom password: ' + state.roomPassword + '\nOpen: ' + location.origin;
+  try { await navigator.clipboard.writeText(details); alertToast('Room name and password copied. Send them only to people you trust.'); }
+  catch { window.prompt('Copy the room details and share them privately:', details); }
 }
 function alertToast(message) {
   const toast = document.querySelector('#toast');
