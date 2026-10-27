@@ -276,3 +276,22 @@ body.dark{--ink:#edf4f5;--muted:#a5b8c4;--green:#a6f0d6;--line:rgba(215,239,244,
 }
 @media(max-width:390px){.landing{padding-right:16px;padding-left:16px}.brand{font-size:20px}.nav-note{max-width:160px}.hero h1{font-size:clamp(43px,11vw,52px)}.personal-actions{gap:7px}.personal-actions button{padding:10px 8px}.personal-actions small{font-size:8px}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+
+/* Room credentials and video-call controls */
+.room-form input[type="password"] { letter-spacing: .08em; }
+.room-form-hint { display:block; margin: -2px 0 8px; color: var(--muted, #8c948e); font-size: .78rem; line-height: 1.45; }
+.call-control { min-width: 76px; }
+.call-control:disabled { opacity: .45; cursor: not-allowed; }
+.call-control.active { background: rgba(151, 113, 255, .18); border-color: rgba(151, 113, 255, .42); }
+.video-players { display:flex; flex-wrap:wrap; gap:12px; padding:0 22px 12px; }
+.video-tile { position:relative; overflow:hidden; width:min(260px, 42vw); aspect-ratio:16/10; border-radius:18px; background:#10131a; border:1px solid rgba(255,255,255,.16); box-shadow:0 12px 32px rgba(0,0,0,.2); }
+.video-tile video { width:100%; height:100%; display:block; object-fit:cover; }
+.video-tile small { position:absolute; left:10px; bottom:9px; padding:4px 8px; border-radius:999px; color:#fff; background:rgba(0,0,0,.52); font-size:.72rem; backdrop-filter:blur(10px); }
+@media (max-width:700px) {
+  .chat-topbar { flex-wrap:wrap; gap:10px; }
+  .top-actions { display:flex; width:100%; overflow-x:auto; gap:7px; padding-bottom:3px; }
+  .top-actions > * { flex:0 0 auto; }
+  .video-players { padding:0 12px 10px; }
+  .video-tile { width:min(46vw, 220px); border-radius:14px; }
+  .call-control { min-width:64px; padding-inline:9px; font-size:.76rem; }
+}
